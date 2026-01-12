@@ -1,24 +1,31 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { Stack } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
-import 'react-native-reanimated';
+import { Stack } from "expo-router";
+import { useFonts } from "expo-font";
+import * as SplashScreen from 'expo-splash-screen';
+import { useEffect } from "react";
 
-import { useColorScheme } from '@/hooks/use-color-scheme';
-
-export const unstable_settings = {
-  anchor: '(tabs)',
-};
+SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
-  const colorScheme = useColorScheme();
+  const [loaded, error] = useFonts({
+    'Nunito': require('@/assets/fonts/Nunito/Nunito-Regular.ttf'),
+    'Nunito-Bold': require('@/assets/fonts/Nunito/Nunito-Bold.ttf'),
+    'Nunito-Black': require('@/assets/fonts/Nunito/Nunito-Black.ttf'),
+    'Nunito-SemiBold': require('@/assets/fonts/Nunito/Nunito-SemiBold.ttf'),
+    'NunitoSans-Regular': require('@/assets/fonts/Nunito/NunitoSans-Regular.ttf'),
+    'NunitoSans-SemiBold': require('@/assets/fonts/Nunito/NunitoSans-SemiBold.ttf'),
+  });
 
-  return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
-      </Stack>
-      <StatusBar style="auto" />
-    </ThemeProvider>
-  );
+  useEffect(() => {
+    if (loaded || error) {
+      SplashScreen.hideAsync();
+    }
+  }, [loaded, error]);
+
+  if (!loaded && !error) {
+    return null;
+  } 
+
+  return <Stack 
+    screenOptions={{ headerShown: false }}
+  />;
 }

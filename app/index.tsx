@@ -1,10 +1,11 @@
-import { Text, View, StyleSheet, ScrollView, Alert, Image as RNImage } from "react-native";
+import { Text, View, StyleSheet, ScrollView, Alert, Image as RNImage, TouchableOpacity } from "react-native";
 import { AppBar } from "@/components/appbar";
 import { Colors } from "@/theme/colors"
 import { FloatingActionButton } from "@/components/floating-action-button";
 import { DropdownItem } from "@/components/dropdown-item";
 import * as ImagePicker from 'expo-image-picker';
 import { useState } from "react";
+import { router } from "expo-router";
 
 interface UploadedFile {
   id: string;
@@ -16,6 +17,17 @@ interface UploadedFile {
 
 export default function Index() {
   const [files, setFiles] = useState<UploadedFile[]>([]);
+
+  const navigateToResults = (file: UploadedFile) => {
+    router.push({
+      pathname: '/results',
+      params: {
+        filename: file.filename,
+        uri: file.uri,
+        type: file.type,
+      }
+    })
+  }
 
   const handleImageUpload = async () => {
     // Request Permission
@@ -117,6 +129,13 @@ export default function Index() {
             {file.uri && file.type === 'video' && (
               <Text style={styles.videoInfo}>Video file: {file.filename}</Text>
             )}
+
+            <TouchableOpacity 
+              style={styles.seeMoreButton}
+              onPress={() => navigateToResults(file)}
+            >
+              <Text style={styles.seeMoreText}>See Results</Text>
+            </TouchableOpacity>
           </DropdownItem> 
         ))
       )}
@@ -133,7 +152,7 @@ export default function Index() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: Colors.light.background,
   },
   content: {
     
@@ -150,14 +169,14 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     textAlign: 'center',
-    color: '#999',
+    color: Colors.light.subtext,
     marginTop: 40,
     fontSize: 16,
     fontFamily: 'NunitoSans-Regular',
   },
   fileType: {
     fontSize: 14,
-    color: '#666',
+    color: Colors.light.subtext,
     marginBottom: 8,
     fontFamily: 'NunitoSans-Regular',
   },
@@ -169,7 +188,20 @@ const styles = StyleSheet.create({
   },
   videoInfo: {
     fontSize: 14,
-    color: '#666',
+    color: Colors.light.subtext,
     fontFamily: 'NunitoSans-Regular',
   },
+  seeMoreButton: {
+    marginTop: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    // backgroundColor: Colors.light.primary,
+    borderRadius: 8,
+    alignSelf: 'center',
+  },
+  seeMoreText: {
+    color: Colors.light.secondary,
+    fontSize: 14,
+    fontFamily: 'NunitoSans-SemiBold',
+  }
 });

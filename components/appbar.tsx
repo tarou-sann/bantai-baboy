@@ -7,6 +7,7 @@ import {
     Platform, 
     ViewStyle,
     TextStyle,
+    TouchableOpacity,
 } from 'react-native';
 import { useTheme } from '@/hooks/use-theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -17,6 +18,8 @@ export interface AppBarProps {
     titleColor?: string;
     style?: ViewStyle;
     titleStyle?: TextStyle;
+    leftIcon?: React.ReactNode;
+    onLeftIconPress?: () => void;
 }
 
 export function AppBar({
@@ -25,6 +28,8 @@ export function AppBar({
     titleColor,
     style,
     titleStyle,
+    leftIcon,
+    onLeftIconPress
 }: AppBarProps) {
     const { colors } = useTheme();
     const insets = useSafeAreaInsets();
@@ -49,6 +54,14 @@ export function AppBar({
             style,
             ]}
         >
+            {leftIcon && (
+                <TouchableOpacity 
+                    onPress={onLeftIconPress}
+                    style={styles.leftIcon}
+                >
+                {leftIcon}
+                </TouchableOpacity>
+            )}
             <Text
             style={[
                 styles.title,
@@ -58,6 +71,7 @@ export function AppBar({
             >
             {title}
             </Text>
+            
         </View>
         </>
     );
@@ -67,12 +81,21 @@ const styles = StyleSheet.create({
     container: {
         paddingHorizontal: 16,
         paddingVertical: 20,
+        flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
+        position: 'relative',
     },
     title: {
         fontSize: 20,
         // fontWeight: '700',
         fontFamily: 'Nunito-Black',
+        textAlign: 'center',
+    },
+    leftIcon: {
+        position: 'absolute',
+        left: 16,
+        bottom: 20,
+        zIndex: 1,
     },
 });

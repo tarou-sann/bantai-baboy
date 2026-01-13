@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ViewStyle } from 'react-native';
 import { CaretDown, CaretUp } from 'phosphor-react-native';
+import { Colors } from '@/theme/colors';
 
 export interface DropdownItemProps {
     title: string;
@@ -55,15 +56,21 @@ export function DropdownItem({
 
 const styles = StyleSheet.create({
     container: {
-        borderBottomWidth: 1,
-        borderBottomColor: '#e0e0e0',
+        borderWidth: 1,
+        borderColor: '#e0e0e0',
+        backgroundColor: Colors.light.background,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: -2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 2,
     },
     header: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
         padding: 16,
-        backgroundColor: '#fff',
+        backgroundColor: Colors.light.background,
     },
     textContainer: {
         flex: 1, 
@@ -75,10 +82,11 @@ const styles = StyleSheet.create({
     },
     subtitle: {
         fontSize: 14,
-        color: '#776D6D'
+        color: Colors.light.subtext,
+        fontFamily: 'NunitoSans-Regular',
     },
     content: {
         padding: 16,
-        backgroundColor: '#F5F5F5'
+        backgroundColor: Colors.light.background
     },
 });

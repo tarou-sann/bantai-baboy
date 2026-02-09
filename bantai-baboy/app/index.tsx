@@ -5,6 +5,7 @@ import { Colors } from "@/theme/colors";
 import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
 import { useState } from "react";
+import { ArrowRight } from "phosphor-react-native";
 import {
   ActivityIndicator,
   Alert,
@@ -29,7 +30,7 @@ export default function Index() {
   const [isUploading, setIsUploading] = useState(false);
 
   // ========== CHANGE THIS TO YOUR PC IP ADDRESS ==========
-  const SERVER_URL = "http://192.168.0.102:5000/analyze";
+  const SERVER_URL = "http://192.168.0.160:5000/analyze";
   // =======================================================
 
   const navigateToResults = (file: UploadedFile, analysisResult?: any) => {
@@ -192,10 +193,11 @@ export default function Index() {
               )}
 
               <TouchableOpacity
-                style={styles.seeMoreButton}
+                style={styles.seeResultsButton}
                 onPress={() => navigateToResults(file)}
               >
-                <Text style={styles.seeMoreText}>See Results</Text>
+                <Text style={styles.seeResultsText}>See Results  </Text>
+                <ArrowRight size={18} color={Colors.light.secondary} weight="bold"/>
               </TouchableOpacity>
             </DropdownItem>
           ))
@@ -239,7 +241,7 @@ const styles = StyleSheet.create({
   fileType: {
     fontSize: 14,
     color: Colors.light.subtext,
-    marginBottom: 8,
+    marginBottom: 16,
     fontFamily: "NunitoSans-Regular",
   },
   previewImage: {
@@ -260,7 +262,13 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignSelf: "center",
   },
-  seeMoreText: {
+  seeResultsButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: 'flex-end',
+    marginTop: 8
+  },
+  seeResultsText: {
     color: Colors.light.secondary,
     fontSize: 14,
     fontFamily: "NunitoSans-SemiBold",

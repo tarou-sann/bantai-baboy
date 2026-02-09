@@ -40,9 +40,9 @@ export function DropdownItem({
                     {subtitle && <Text style={styles.subtitle}>{subtitle}</Text>}
                 </View>
                 {expanded ? (
-                    <CaretUp size={24} color="#743535"/>
+                    <CaretUp size={20} color="#743535" weight="bold"/>
                 ) : (
-                    <CaretDown size={24} color="#743535"/>
+                    <CaretDown size={20} color="#743535" weight="bold"/>
                 )}
             </TouchableOpacity>
             {expanded && (
@@ -56,12 +56,17 @@ export function DropdownItem({
 
 const styles = StyleSheet.create({
     container: {
+        borderRadius: 8,
         borderWidth: 1,
-        borderColor: '#e0e0e0',
-        backgroundColor: Colors.light.background,
+        borderColor: Colors.light.white,
+        backgroundColor: Colors.light.white,
+        marginTop: 5,
+        marginLeft: 8,
+        marginRight: 8,
+        marginBottom: 8,
         shadowColor: '#000',
-        shadowOffset: { width: 0, height: -2 },
-        shadowOpacity: 0.1,
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.08,
         shadowRadius: 4,
         elevation: 2,
     },
@@ -70,14 +75,17 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         alignItems: 'center',
         padding: 16,
-        backgroundColor: Colors.light.background,
+        backgroundColor: Colors.light.white,
+        borderRadius: 8,
     },
     textContainer: {
         flex: 1, 
     },
     title: {
         fontSize: 16,
+        fontWeight: '600',
         marginBottom: 4, 
+        color: Colors.light.text,
         fontFamily: 'Nunito-Regular',
     },
     subtitle: {
@@ -87,6 +95,8 @@ const styles = StyleSheet.create({
     },
     content: {
         padding: 16,
-        backgroundColor: Colors.light.background
+        backgroundColor: Colors.light.white,
+        borderBottomLeftRadius: 8,
+        borderBottomRightRadius: 8,
     },
 });

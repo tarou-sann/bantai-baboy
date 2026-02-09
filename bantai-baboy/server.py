@@ -10,7 +10,7 @@ app = Flask(__name__)
 
 # --- CONFIG ---
 # UPDATE THIS PATH!
-MOBILENET_PATH = r'C:\Users\Tan\Desktop\Thesis_Software\bantai-baboy\mobilenet_model\mobilenet_pig_classifier.h5'
+MOBILENET_PATH = r'C:\Users\tarou\Documents\Codes\React\bantai-baboy\bantai-baboy\mobilenet_model\mobilenet_pig_classifier.h5'
 BEHAVIOR_CLASSES = ['Drinking', 'Eating', 'Investigating', 'Lying', 'Moutend', 'Sleeping', 'Walking']
 UPLOAD_FOLDER = 'uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)

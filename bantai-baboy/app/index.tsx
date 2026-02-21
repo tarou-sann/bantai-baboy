@@ -25,13 +25,13 @@ interface UploadedFile {
   uploadTime: string;
 }
 
+// ========== CHANGE THIS TO YOUR PC IP ADDRESS ==========
+const SERVER_URL = "http://10.149.185.92:5000";
+// =======================================================
+
 export default function Index() {
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const [isUploading, setIsUploading] = useState(false);
-
-  // ========== CHANGE THIS TO YOUR PC IP ADDRESS ==========
-  const SERVER_URL = "http://192.168.0.160:5000/analyze";
-  // =======================================================
 
   const navigateToResults = (file: UploadedFile, analysisResult?: any) => {
     router.push({
@@ -40,7 +40,6 @@ export default function Index() {
         filename: file.filename,
         uri: file.uri,
         type: file.type,
-        // If we have analysis data, pass it as a string
         analysisData: analysisResult
           ? JSON.stringify(analysisResult)
           : undefined,
@@ -48,44 +47,82 @@ export default function Index() {
     });
   };
 
-  const uploadToServer = async (asset: ImagePicker.ImagePickerAsset) => {
+  const uploadToServer = async (
+    asset: ImagePicker.ImagePickerAsset,
+    mediaType: "image" | "video"
+  ) => {
     setIsUploading(true);
+
+    const endpoint =
+      mediaType === "image" ? "/analyze-image" : "/analyze-video";
 
     const formData = new FormData();
     formData.append("file", {
       uri: asset.uri,
-      name: asset.fileName || "video.mp4",
-      type: asset.mimeType || "video/mp4",
+      name:
+        asset.fileName ||
+        (mediaType === "image" ? "image.jpg" : "video.mp4"),
+      type:
+        asset.mimeType ||
+        (mediaType === "image" ? "image/jpeg" : "video/mp4"),
     } as any);
 
     try {
-      console.log("Uploading to:", SERVER_URL);
-      const response = await fetch(SERVER_URL, {
+      console.log(`Uploading to: ${SERVER_URL}${endpoint}`);
+
+      const controller = new AbortController();
+      // 3 minute timeout for videos, 30s for images
+      const timeoutMs = mediaType === "video" ? 180000 : 30000;
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+      const response = await fetch(`${SERVER_URL}${endpoint}`, {
         method: "POST",
         body: formData,
         headers: {
           "Content-Type": "multipart/form-data",
         },
+        signal: controller.signal,
       });
+
+      clearTimeout(timeoutId);
+
+      // Check content type before parsing — avoids the HTML parse error
+      const contentType = response.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        const text = await response.text();
+        console.error("Non-JSON response:", text);
+        Alert.alert(
+          "Server Error",
+          "Server returned an unexpected response. Check that Flask is running and the endpoint is correct."
+        );
+        return null;
+      }
 
       const result = await response.json();
 
       if (response.ok) {
         Alert.alert(
           "Analysis Complete",
-          `Detected: ${result.most_common_behavior}`,
+          `Detected: ${result.primary_behavior}`
         );
         return result;
       } else {
         Alert.alert("Server Error", result.error || "Unknown error occurred");
         return null;
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      Alert.alert(
-        "Connection Error",
-        "Could not connect to Python server. Check IP address.",
-      );
+      if (error.name === "AbortError") {
+        Alert.alert(
+          "Timeout",
+          "Analysis took too long. Try a shorter video or check your connection."
+        );
+      } else {
+        Alert.alert(
+          "Connection Error",
+          "Could not connect to Python server. Check your IP address and ensure Flask is running."
+        );
+      }
       return null;
     } finally {
       setIsUploading(false);
@@ -104,15 +141,21 @@ export default function Index() {
 
     if (!result.canceled && result.assets[0]) {
       const asset = result.assets[0];
-      const fileName = asset.uri.split("/").pop() || "image.jpg";
-      const newFile: UploadedFile = {
-        id: Date.now().toString(),
-        filename: fileName,
-        uri: asset.uri,
-        type: "image",
-        uploadTime: `Uploaded Just now`,
-      };
-      setFiles([newFile, ...files]);
+
+      const analysisResult = await uploadToServer(asset, "image");
+
+      if (analysisResult) {
+        const fileName = asset.uri.split("/").pop() || "image.jpg";
+        const newFile: UploadedFile = {
+          id: Date.now().toString(),
+          filename: fileName,
+          uri: asset.uri,
+          type: "image",
+          uploadTime: "Analyzed just now",
+        };
+        setFiles([newFile, ...files]);
+        navigateToResults(newFile, analysisResult);
+      }
     }
   };
 
@@ -129,24 +172,18 @@ export default function Index() {
     if (!result.canceled && result.assets[0]) {
       const asset = result.assets[0];
 
-      // 1. Upload and Analyze
-      const analysisResult = await uploadToServer(asset);
+      const analysisResult = await uploadToServer(asset, "video");
 
       if (analysisResult) {
-        // 2. If successful, save locally and navigate
         const fileName = asset.uri.split("/").pop() || "video.mp4";
-
         const newFile: UploadedFile = {
           id: Date.now().toString(),
           filename: fileName,
           uri: asset.uri,
           type: "video",
-          uploadTime: `Analyzed Just now`,
+          uploadTime: "Analyzed just now",
         };
-
         setFiles([newFile, ...files]);
-
-        // Optional: Auto-navigate to results
         navigateToResults(newFile, analysisResult);
       }
     }
@@ -197,14 +234,17 @@ export default function Index() {
                 onPress={() => navigateToResults(file)}
               >
                 <Text style={styles.seeResultsText}>See Results  </Text>
-                <ArrowRight size={18} color={Colors.light.secondary} weight="bold"/>
+                <ArrowRight
+                  size={18}
+                  color={Colors.light.secondary}
+                  weight="bold"
+                />
               </TouchableOpacity>
             </DropdownItem>
           ))
         )}
       </ScrollView>
 
-      {/* Disable buttons while uploading to prevent double clicks */}
       {!isUploading && (
         <FloatingActionButton
           onImagePress={handleImageUpload}
@@ -255,18 +295,11 @@ const styles = StyleSheet.create({
     color: Colors.light.subtext,
     fontFamily: "NunitoSans-Regular",
   },
-  seeMoreButton: {
-    marginTop: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 8,
-    alignSelf: "center",
-  },
   seeResultsButton: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: 'flex-end',
-    marginTop: 8
+    justifyContent: "flex-end",
+    marginTop: 8,
   },
   seeResultsText: {
     color: Colors.light.secondary,

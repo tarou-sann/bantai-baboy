@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, Image as RNImage, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Image as RNImage, ActivityIndicator, Alert, TouchableOpacity } from 'react-native';
 import { AppBar } from '@/components/appbar';
 import { DropdownItem } from '@/components/dropdown-item';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -17,7 +17,7 @@ interface AnalysisResult {
 }
 
 // UPDATE THIS to your computer's local IP address (e.g., 'http://192.168.1.5:5000')
-const API_BASE_URL = 'http://10.149.185.92:5000'; 
+const API_BASE_URL = 'http://192.168.0.160:5000'; 
 
 export default function Results() {
     // Strictly type the expected params from the previous screen
@@ -83,21 +83,41 @@ export default function Results() {
     return (
         <View style={styles.container}>
             <AppBar 
+                title="Bant-AI Baboy"
                 leftIcon={<ArrowLeft size={28} color={Colors.light.secondary} weight="bold" />}
                 onLeftIconPress={() => router.back()}
             />
 
             <ScrollView style={styles.content}>
-                <View style={styles.mediaContainer}>
+                {/* Media Preview */}
+                <View style={styles.previewWrapper}>
                     {type === 'image' && uri ? (
-                        <RNImage 
-                            source={{uri: uri}}
-                            style={styles.mediaPreview}
-                            resizeMode="cover"
-                        />
+                        <View style={styles.previewWrapper}>
+                            <RNImage 
+                                source={{ uri: uri }}
+                                style={styles.mediaPreview}
+                                resizeMode="cover"
+                            />
+                            {resultData?.detected_pigs_count !== undefined && (
+                                <View style={styles.hogsBadge}>
+                                    <Text style={styles.hogsBadgeText}>
+                                        Detected Hogs: {resultData.detected_pigs_count}
+                                    </Text>
+                                </View>
+                            )}
+                        </View>
                     ) : (
-                        <View style={styles.placeholderMedia}>
-                            <Text style={styles.placeholderText}>Video Preview</Text>
+                        <View style={styles.previewWrapper}>
+                            <View style={styles.placeholderMedia}>
+                                <Text style={styles.placeholderText}>Video Preview</Text>
+                            </View>
+                            {resultData?.detected_pigs_count !== undefined && (
+                                <View style={styles.hogsBadge}>
+                                    <Text style={styles.hogsBadgeText}>
+                                        Detected Hogs: {resultData.detected_pigs_count}
+                                    </Text>
+                                </View>
+                            )}
                         </View>
                     )}
                 </View>
@@ -109,9 +129,9 @@ export default function Results() {
                     </View>
                 ) : resultData ? (
                     <>
-                        <Text style={styles.detectedTitle}>
+                        {/* <Text style={styles.detectedTitle}>
                             Detected Behavior: {resultData.primary_behavior}
-                        </Text>
+                        </Text> */}
 
                         <DropdownItem title='Results' defaultExpanded={true}>
                             <Text style={styles.placeholderContent}>
@@ -155,11 +175,40 @@ export default function Results() {
                                 {"\n"}- Ensure water and feed stations are accessible.
                             </Text>
                         </DropdownItem>
+
+                        <TouchableOpacity
+                            onPress={() => router.push({
+                                pathname: '/analytics',
+                                params: {
+                                    details: JSON.stringify(resultData.details),
+                                    primary_behavior: resultData.primary_behavior,
+                                    lethargy_flags: resultData.lethargy_flags,
+                                    detected_pigs_count: resultData.detected_pigs_count,
+                                }
+                            })}
+                            activeOpacity={0.7}
+                            style={styles.analyticsTextButton}
+                        >
+                            <Text style={styles.analyticsTextButtonLabel}>Analytics</Text>
+                        </TouchableOpacity>
                     </>
                 ) : (
                     <Text style={styles.errorText}>No results available.</Text>
                 )}
             </ScrollView>
+            {resultData && (
+                <View style={styles.bottomContainer}>
+                    <TouchableOpacity
+                        style={styles.saveButton}
+                        activeOpacity={0.8}
+                        onPress={() => {
+                            // TODO: add save functionality
+                        }}
+                    >
+                        <Text style={styles.saveButtonText}>Save Results</Text>
+                    </TouchableOpacity>
+                </View>
+            )}
         </View>
     );
 }
@@ -173,22 +222,39 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     mediaContainer: {
-        padding: 16,
-        alignItems: 'center',
+        paddingHorizontal: 16,
+        paddingTop: 16,
+        paddingBottom: 8,
+    },
+    previewWrapper: {
+        width: '100%',
+        // borderRadius: 16,
+        overflow: 'hidden',
     },
     mediaPreview: {
-        width: 200,
-        height: 200,
-        borderRadius: 8, 
-        backgroundColor: Colors.light.background,
-    }, 
+        width: '100%',
+        height: 280,
+    },
     placeholderMedia: {
-        width: 200,
-        height: 200,
-        borderRadius: 8,
-        backgroundColor: '#e0e0e0',
+        width: '100%',
+        height: 280,
+        backgroundColor: Colors.light.background,
         justifyContent: 'center',
         alignItems: 'center',
+    },
+    hogsBadge: {
+        position: 'absolute',
+        bottom: 16,
+        alignSelf: 'center',
+        backgroundColor: Colors.light.white,
+        paddingVertical: 6,
+        paddingHorizontal: 20,
+        borderRadius: 20,
+    },
+    hogsBadgeText: {
+        color: Colors.light.secondary,
+        fontSize: 14,
+        fontFamily: 'NunitoSans-SemiBold',
     },
     placeholderText: {
         color: Colors.light.subtext,
@@ -205,7 +271,7 @@ const styles = StyleSheet.create({
     placeholderContent: {
         fontSize: 14,
         color: Colors.light.subtext,
-        fontFamily: 'NunitoSans-Regular',
+        fontFamily: 'NunitoSans-SemiBold',
         lineHeight: 20,
     },
     loadingContainer: {
@@ -222,5 +288,35 @@ const styles = StyleSheet.create({
         color: 'red',
         marginTop: 20,
         fontFamily: 'NunitoSans-Regular',
-    }
+    },
+    scrollContent: {
+        paddingBottom: 24,
+    },
+    analyticsTextButton: {
+        marginTop: 8,
+        marginLeft: 16,
+        alignSelf: 'flex-start',
+    },
+    analyticsTextButtonLabel: {
+        color: Colors.light.secondary,
+        fontSize: 16,
+        fontFamily: 'NunitoSans-Bold',
+    },
+    bottomContainer: {
+        paddingHorizontal: 100,
+        paddingVertical: 16,
+        backgroundColor: Colors.light.background,
+    },
+    saveButton: {
+        backgroundColor: Colors.light.results,
+        paddingVertical: 16,
+        borderRadius: 9,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    saveButtonText: {
+        color: Colors.light.white,
+        fontSize: 15,
+        fontFamily: 'NunitoSans-SemiBold',
+    },
 });

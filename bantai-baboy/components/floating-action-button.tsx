@@ -1,28 +1,19 @@
 import React, { useState } from 'react';
-import { View, TouchableOpacity, StyleSheet, ViewStyle } from 'react-native';
-import { UploadSimple, VideoCamera, Image } from 'phosphor-react-native';
+import { View, TouchableOpacity, StyleSheet, ViewStyle, Text } from 'react-native';
+import { UploadSimple, Video, Image, Camera} from 'phosphor-react-native';
 import { Colors } from '@/theme/colors';
-
-export interface FABAction {
-    icon: React.ReactNode;
-    onpress: () => void;
-}
 
 export interface FloatingActionButtonProps {
     onVideoPress?: () => void;
     onImagePress?: () => void;
-    mainColor?: string;
-    smallButtonColor?: string;
-    iconColor?: string;
+    onCameraPress?: () => void;
     style?: ViewStyle;
 }
 
 export function FloatingActionButton({
     onVideoPress,
     onImagePress,
-    mainColor = '#743535',
-    smallButtonColor = Colors.light.primary,
-    iconColor = Colors.light.secondary,
+    onCameraPress,
     style
 }: FloatingActionButtonProps) {
     const [expanded, setExpanded] = useState(false);
@@ -37,54 +28,64 @@ export function FloatingActionButton({
         setExpanded(false);
     };
 
+    const handleCameraPress = () => {
+        onCameraPress?.();
+        setExpanded(false);
+    };
+
     return (
         <>
-        {/* Dimmed Background Overlay*/}
-        {expanded && (
+        {/* {expanded && (
             <TouchableOpacity 
                 style={styles.overlay}
                 activeOpacity={1}
                 onPress={() => setExpanded(false)}
             />
-        )}
+        )} */}
 
-        {/* Expanded Action Buttons */}
-        {expanded && (
-            <View style={styles.expandedButtons}>
-                {/* Video Button - Left */}
-                <TouchableOpacity 
-                    style={[styles.smallFab, { backgroundColor: '#E3CECE'}]}
-                    onPress={handleVideoPress}
-                    activeOpacity={0.8}>
-                    <VideoCamera size={30} color='#9D6565' weight="bold" />
+        <View style={[styles.fabContainer, style]}>
+            <View style={styles.pillContainer}>
+                {/* Camera — left, no expanded content above */}
+                <TouchableOpacity
+                    onPress={handleCameraPress}
+                    activeOpacity={0.8}
+                    style={styles.pillButton}>
+                    <Camera size={24} color={Colors.light.secondary} weight="regular" />
+                    <Text style={styles.pillLabel}>Camera</Text>
                 </TouchableOpacity>
-                {/* Image Button - Right */}
-                <TouchableOpacity 
-                    style={[styles.smallFab, { backgroundColor: '#E3CECE'}]}
-                    onPress={handleImagePress}
-                    activeOpacity={0.8}>
-                    <Image size={30} color='#9D6565' weight="bold" />
-                </TouchableOpacity>
+
+                {/* Upload — right, expanded content floats above it */}
+                <View style={styles.uploadWrapper}>
+                    {expanded && (
+                        <View style={styles.topRow}>
+                            <TouchableOpacity 
+                                style={styles.smallFab}
+                                onPress={handleVideoPress}
+                                activeOpacity={0.8}>
+                                <Video size={24} color={Colors.light.white} weight="fill" />
+                                <Text style={styles.fabLabel}>Video</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity 
+                                style={styles.smallFab}
+                                onPress={handleImagePress}
+                                activeOpacity={0.8}>
+                                <Image size={24} color={Colors.light.white} weight="fill" />
+                                <Text style={styles.fabLabel}>Image</Text>
+                            </TouchableOpacity>
+                        </View>
+                    )}
+
+                    <TouchableOpacity
+                        onPress={() => setExpanded(!expanded)}
+                        activeOpacity={0.8}
+                        style={[styles.uploadIconWrapper, expanded && styles.uploadIconWrapperActive]}>
+                        <UploadSimple size={24} color={expanded ? Colors.light.white : Colors.light.secondary} />
+                        <Text style={[styles.pillLabel, expanded && styles.pillLabelActive]}>Upload</Text>
+                    </TouchableOpacity>
+                </View>
             </View>
-        )}
-
-        {/* Main FAB */}
-        <TouchableOpacity
-            style={[
-                styles.fab,
-                { backgroundColor: Colors.light.primary },
-                expanded && styles.fabExpanded,
-                style,
-            ]}
-            onPress={() => setExpanded(!expanded)}
-            activeOpacity={0.8}
-            >
-                <UploadSimple 
-                    size={50} 
-                    color={Colors.light.secondary} 
-                    weight="bold"
-                    />
-        </TouchableOpacity>
+        </View>
         </>
     );
 }
@@ -99,43 +100,81 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(0, 0, 0, 0.1)',
         zIndex: 1,
     },
-    fab: {
+    fabContainer: {
         position: 'absolute',
         bottom: 30,
         alignSelf: 'center',
-        width: 100,
-        height: 100,
-        borderRadius: 50,
-        justifyContent: 'center',
-        alignItems: 'center',
-        elevation: 8,
-        // shadowColor: '#000',
-        // shadowOffset: { width: 0, height: 4 },
-        // shadowOpacity: 0.3,
-        // shadowRadius: 4,
-        zIndex: 3,
-    },
-    fabExpanded: {
-        opacity: 0.9,
-    },
-    expandedButtons: {
-        position: 'absolute',
-        bottom: 140, 
-        alignSelf: 'center',
-        flexDirection: 'row',
-        gap: 20,
         zIndex: 2,
     },
-    smallFab: {
-        width: 75,
-        height: 75,
-        borderRadius: 40,
-        justifyContent: 'center', 
+    pillContainer: {
+        flexDirection: 'row',
+        backgroundColor: Colors.light.buttonbg,
+        borderRadius: 50,
+        paddingVertical: 1,
+        paddingHorizontal: 8,
         alignItems: 'center',
-        elevation: 6,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 3 },
-        shadowOpacity: 0.25,
+        // elevation: 6,
+        // shadowColor: '#000',
+        // shadowOffset: { width: 0, height: 3 },
+        // shadowOpacity: 0.25,
+        // shadowRadius: 3,
+    },
+    pillButton: {
+        alignItems: 'center',
+        gap: 0,
+        paddingHorizontal: 20,
+    },
+    pillLabel: {
+        color: Colors.light.secondary,
+        fontSize: 12,
+        fontFamily: 'NunitoSans-SemiBold',
+    },
+    pillLabelActive: {
+        color: Colors.light.white,
+    },
+    uploadWrapper: {
+        alignItems: 'center',
+        paddingHorizontal: 8,
+    },
+    topRow: {
+        position: 'absolute',
+        bottom: '100%',
+        flexDirection: 'row',
+        gap: 16,
+        paddingBottom: 12,
+        alignSelf: 'center',
+    },
+    smallFabWrapper: {
+        alignItems: 'center',
+        gap: 4,
+    },
+    smallFab: {
+        width: 60,
+        height: 58,
+        borderRadius: 40,
+        backgroundColor: Colors.light.smallfab,
+        justifyContent: 'center',
+        alignItems: 'center',
+        // elevation: 6,
+        // shadowColor: '#000',
+        // shadowOffset: { width: 0, height: 3 },
+        // shadowOpacity: 0.25,
         shadowRadius: 3,
+    },
+    fabLabel: {
+        color: Colors.light.white,
+        fontSize: 12,
+        fontFamily: 'NunitoSans-SemiBold',
+    },
+    uploadIconWrapper: {
+        width: 60,
+        height: 58,
+        borderRadius: 40,
+        justifyContent: 'center',
+        alignItems: 'center',
+        gap: 0,
+    },
+    uploadIconWrapperActive: {
+        backgroundColor: Colors.light.smallfab,
     },
 });

@@ -1,11 +1,14 @@
 export const Colors = {
     light: {
-        background: '#F5F5F5',
+        background: '#FFF6F6',
         white: '#FBFBFB',
         primary: '#DAABAB',
         secondary: '#743535',
         text: '#271D1D',
-        subtext: '#776D6D'
+        subtext: '#776D6D',
+        smallfab: '#BE9999',
+        buttonbg: '#F2D9D9',
+        results: '#9D6565',
     }
 }
 

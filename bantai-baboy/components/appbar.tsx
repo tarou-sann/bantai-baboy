@@ -1,10 +1,9 @@
 import React from 'react';
-import { 
-    View, 
+import {
+    View,
     Text,
     StyleSheet,
     StatusBar,
-    Platform, 
     ViewStyle,
     TextStyle,
     TouchableOpacity,
@@ -34,7 +33,7 @@ export function AppBar({
     const { colors } = useTheme();
     const insets = useSafeAreaInsets();
 
-    const bgColor = backgroundColor || colors.primary;
+    const bgColor = backgroundColor || colors.background;
     const textColor = titleColor || colors.secondary;
 
     return (
@@ -44,34 +43,20 @@ export function AppBar({
             backgroundColor={bgColor}
             translucent={false}
         />
-        <View
-            style={[
-            styles.container,
-            {
-                backgroundColor: bgColor,
-                paddingTop: insets.top,
-            },
-            style,
-            ]}
-        >
-            {leftIcon && (
-                <TouchableOpacity 
-                    onPress={onLeftIconPress}
-                    style={styles.leftIcon}
-                >
-                {leftIcon}
-                </TouchableOpacity>
-            )}
-            <Text
-            style={[
-                styles.title,
-                { color: textColor },
-                titleStyle,
-            ]}
-            >
-            {title}
-            </Text>
-            
+        <View style={[styles.container, { backgroundColor: bgColor, paddingTop: insets.top + 16 }, style]}>
+            <View style={styles.row}>
+                {leftIcon && (
+                    <TouchableOpacity
+                        onPress={onLeftIconPress}
+                        style={styles.leftIcon}
+                    >
+                        {leftIcon}
+                    </TouchableOpacity>
+                )}
+                <Text style={[styles.title, { color: textColor }, titleStyle]}>
+                    {title}
+                </Text>
+            </View>
         </View>
         </>
     );
@@ -80,22 +65,25 @@ export function AppBar({
 const styles = StyleSheet.create({
     container: {
         paddingHorizontal: 16,
-        paddingVertical: 20,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        position: 'relative',
+        paddingBottom: 16,
+        // flexDirection: 'row',
+        // alignItems: 'center',
+        // justifyContent: 'flex-start',
+        // gap: 8,
     },
     title: {
-        fontSize: 20,
-        // fontWeight: '700',
+        fontSize: 28,
         fontFamily: 'Nunito-Black',
-        textAlign: 'center',
+        textAlign: 'left',
+        flexShrink: 1,
     },
     leftIcon: {
-        position: 'absolute',
-        left: 16,
-        bottom: 20,
-        zIndex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
     },
+    row: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    }
 });

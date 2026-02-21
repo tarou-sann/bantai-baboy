@@ -5,7 +5,6 @@ import { Colors } from "@/theme/colors";
 import * as ImagePicker from "expo-image-picker";
 import { router } from "expo-router";
 import { useState } from "react";
-import { ArrowRight } from "phosphor-react-native";
 import {
   ActivityIndicator,
   Alert,
@@ -26,7 +25,7 @@ interface UploadedFile {
 }
 
 // ========== CHANGE THIS TO YOUR PC IP ADDRESS ==========
-const SERVER_URL = "http://10.149.185.92:5000";
+const SERVER_URL = "http://192.168.0.160:5000";
 // =======================================================
 
 export default function Index() {
@@ -45,6 +44,75 @@ export default function Index() {
           : undefined,
       },
     });
+  };
+
+  const handleCameraCapture = async () => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') return Alert.alert('Permission needed', 'Camera permission is required.');
+
+    Alert.alert(
+      'Camera',
+      'What would you like to capture?',
+      [
+        {
+          text: 'Photo',
+          onPress: async () => {
+            const result = await ImagePicker.launchCameraAsync({
+              mediaTypes: ['images'],
+              allowsEditing: true,
+              quality: 1,
+            });
+
+            if (!result.canceled && result.assets[0]) {
+              const asset = result.assets[0];
+              const analysisResult = await uploadToServer(asset, 'image');
+
+              if (analysisResult) {
+                const fileName = asset.uri.split('/').pop() || 'photo.jpg';
+                const newFile: UploadedFile = {
+                  id: Date.now().toString(),
+                  filename: fileName,
+                  uri: asset.uri,
+                  type: 'image',
+                  uploadTime: 'Analyzed just now',
+                };
+                setFiles([newFile, ...files]);
+                navigateToResults(newFile, analysisResult);
+              }
+            }
+          },
+        },
+        {
+          text: 'Video',
+          onPress: async () => {
+            const result = await ImagePicker.launchCameraAsync({
+              mediaTypes: ['videos'],
+              allowsEditing: true,
+              quality: 1,
+            });
+
+            if (!result.canceled && result.assets[0]) {
+              const asset = result.assets[0];
+              const analysisResult = await uploadToServer(asset, 'video');
+
+              if (analysisResult) {
+                const fileName = asset.uri.split('/').pop() || 'video.mp4';
+                const newFile: UploadedFile = {
+                  id: Date.now().toString(),
+                  filename: fileName,
+                  uri: asset.uri,
+                  type: 'video',
+                  uploadTime: 'Analyzed just now',
+                };
+                setFiles([newFile, ...files]);
+                navigateToResults(newFile, analysisResult);
+              }
+            }
+          },
+        },
+        { text: 'Cancel', style: 'cancel' },
+      ]
+    );
   };
 
   const uploadToServer = async (
@@ -216,6 +284,11 @@ export default function Index() {
               key={file.id}
               title={file.filename}
               subtitle={file.uploadTime}
+              showActions={true} 
+              onSeeResults={() => navigateToResults(file)}
+              onCheckAnalytics={() => {
+                // placeholder for analytics
+              }}
             >
               <Text style={styles.fileType}>Type: {file.type}</Text>
               {file.uri && file.type === "image" && (
@@ -229,7 +302,7 @@ export default function Index() {
                 <Text style={styles.videoInfo}>Video file ready</Text>
               )}
 
-              <TouchableOpacity
+              {/* <TouchableOpacity
                 style={styles.seeResultsButton}
                 onPress={() => navigateToResults(file)}
               >
@@ -239,7 +312,7 @@ export default function Index() {
                   color={Colors.light.secondary}
                   weight="bold"
                 />
-              </TouchableOpacity>
+              </TouchableOpacity> */}
             </DropdownItem>
           ))
         )}
@@ -249,6 +322,7 @@ export default function Index() {
         <FloatingActionButton
           onImagePress={handleImageUpload}
           onVideoPress={handleVideoUpload}
+          onCameraPress={handleCameraCapture}
         />
       )}
     </View>

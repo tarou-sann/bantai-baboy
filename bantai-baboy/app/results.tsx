@@ -5,6 +5,10 @@ import { DropdownItem } from '@/components/dropdown-item';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ArrowLeft } from 'phosphor-react-native';
 import { Colors } from '@/theme/colors';
+// import * as FileSystem from 'expo-file-system';
+import * as Print from 'expo-print';
+import { File, Paths } from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 
 // --- TYPES ---
 interface AnalysisResult {
@@ -63,9 +67,10 @@ export default function Results() {
                 headers: {
                     'Content-Type': 'multipart/form-data',
                 },
+                signal: controller.signal, // FIXED: Added missing signal so the abort controller actually works
             });
 
-            clearTimeout(timeoutId)
+            clearTimeout(timeoutId); // FIXED: Added semicolon
 
             const data = await response.json();
 
@@ -82,6 +87,94 @@ export default function Results() {
         }
     };
 
+    const saveResultsAsPdf = async () => {
+        if (!resultData) return Alert.alert('No results', 'There are no results to save.');
+
+        const rows = Object.entries(resultData.details || {}).map(
+            ([k, v]) => `<tr><td style="padding:6px 8px;border:1px solid #eee">${k}</td><td style="padding:6px 8px;border:1px solid #eee;text-align:right">${v}</td></tr>`
+        ).join('');
+
+        let timeSeriesHtml = '';
+        if (resultData.time_series && resultData.time_series.length > 0) {
+            const tsRows = resultData.time_series.map((d: any) => {
+                const leth = d.lethargy ? 'Yes' : 'No';
+                const limp = d.limping ? 'Yes' : 'No';
+                // FIXED: Added optional chaining to prevent crashes
+                const count = d.pig_count ?? (d.lethargic_ids ? d.lethargic_ids.length : '');
+                return `<tr><td style="padding:6px 8px;border:1px solid #eee">${d.time}</td><td style="padding:6px 8px;border:1px solid #eee;text-align:right">${count}</td><td style="padding:6px 8px;border:1px solid #eee;text-align:center">${leth}</td><td style="padding:6px 8px;border:1px solid #eee;text-align:center">${limp}</td></tr>`;
+            }).join('');
+
+            timeSeriesHtml = `
+                <h3>Time Series</h3>
+                <table style="border-collapse:collapse;width:100%;margin-top:8px"> 
+                    <thead>
+                        <tr>
+                            <th style="text-align:left;padding:6px 8px;border:1px solid #eee">Time</th>
+                            <th style="text-align:right;padding:6px 8px;border:1px solid #eee">Pig Count</th>
+                            <th style="text-align:center;padding:6px 8px;border:1px solid #eee">Lethargy</th>
+                            <th style="text-align:center;padding:6px 8px;border:1px solid #eee">Limping</th>
+                        </tr>
+                    </thead>
+                    <tbody>${tsRows}</tbody>
+                </table>
+            `;
+        }
+
+        const html = `
+            <html>
+                <head>
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+                    <style>
+                        body{font-family: Arial, Helvetica, sans-serif;padding:20px;color:#222}
+                        h1{color:#743535}
+                        table{border-collapse:collapse;width:100%;margin-top:12px}
+                        th{background:#f7f7f7}
+                    </style>
+                </head>
+                <body>
+                    <h1>Bantai Baboy — Analysis Report</h1>
+                    <p><strong>File:</strong> ${filename ?? 'N/A'}</p>
+                    <p><strong>Generated:</strong> ${new Date().toLocaleString()}</p>
+                    <h3>Summary</h3>
+                    <p>Primary Behavior: <strong>${resultData.primary_behavior}</strong></p>
+                    <p>Detected Hogs: <strong>${resultData.detected_pigs_count ?? 'N/A'}</strong></p>
+                    <p>Lethargy Alerts: <strong>${resultData.lethargy_flags ?? 0}</strong></p>
+                    <p>Limping Alerts: <strong>${resultData.limping_flags ?? 0}</strong></p>
+
+                    <h3>Behavior Breakdown</h3>
+                    <table>
+                        <thead>
+                            <tr><th style="text-align:left;padding:6px 8px;border:1px solid #eee">Behavior</th><th style="text-align:right;padding:6px 8px;border:1px solid #eee">Count</th></tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+
+                    ${timeSeriesHtml}
+
+                </body>
+            </html>
+        `;
+
+        try {
+            const { uri } = await Print.printToFileAsync({ html });
+            // const dest = FileSystem.documentDirectory + `bantai-report-${Date.now()}.pdf`;
+            // await FileSystem.moveAsync({ from: uri, to: dest });
+            // await Sharing.shareAsync(dest);
+
+            const fileName = `bantai-report-${Date.now()}.pdf`;
+            const destFile = new File(Paths.document, fileName);
+            
+            const sourceFile = new File(uri);
+            await sourceFile.copy(destFile);
+            
+            await Sharing.shareAsync(destFile.uri);
+
+        } catch (err) {
+            console.error('PDF error', err);
+            Alert.alert('Export failed', 'Unable to create or share PDF.');
+        }
+    };
+
     return (
         <View style={styles.container}>
             <AppBar 
@@ -90,7 +183,8 @@ export default function Results() {
                 onLeftIconPress={() => router.back()}
             />
 
-            <ScrollView style={styles.content}>
+            {/* FIXED: Applied contentContainerStyle for paddingBottom */}
+            <ScrollView style={styles.content} contentContainerStyle={styles.scrollContent}>
                 {/* Media Preview */}
                 <View style={styles.previewWrapper}>
                     {type === 'image' && uri ? (
@@ -131,10 +225,6 @@ export default function Results() {
                     </View>
                 ) : resultData ? (
                     <>
-                        {/* <Text style={styles.detectedTitle}> 
-                            Detected Behavior: {resultData.primary_behavior}
-                        </Text> */}
-
                         <DropdownItem title='Results' defaultExpanded={true}>
                             <Text style={styles.placeholderContent}>
                                 Primary Behavior: {resultData.primary_behavior}
@@ -162,24 +252,28 @@ export default function Results() {
                                             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
                                                 {resultData.time_series
                                                     .filter(d => d.lethargy)
-                                                    .map((d, i) => (
-                                                        <View key={i} style={{
-                                                            backgroundColor: '#FFEBEE',
-                                                            borderRadius: 12,
-                                                            paddingHorizontal: 10,
-                                                            paddingVertical: 4,
-                                                            borderWidth: 1,
-                                                            borderColor: '#D32F2F',
-                                                        }}>
-                                                            <Text style={{
-                                                                color: '#D32F2F',
-                                                                fontSize: 12,
-                                                                fontFamily: 'NunitoSans-SemiBold',
+                                                    .map((d, i) => {
+                                                        // FIXED: Added safety check to prevent crash if lethargic_ids is missing
+                                                        const hogCount = d.lethargic_ids?.length || 0; 
+                                                        return (
+                                                            <View key={i} style={{
+                                                                backgroundColor: '#FFEBEE',
+                                                                borderRadius: 12,
+                                                                paddingHorizontal: 10,
+                                                                paddingVertical: 4,
+                                                                borderWidth: 1,
+                                                                borderColor: '#D32F2F',
                                                             }}>
-                                                                {d.time} — {d.lethargic_ids.length} hog{d.lethargic_ids.length > 1 ? 's' : ''}
-                                                            </Text>
-                                                        </View>
-                                                    ))
+                                                                <Text style={{
+                                                                    color: '#D32F2F',
+                                                                    fontSize: 12,
+                                                                    fontFamily: 'NunitoSans-SemiBold',
+                                                                }}>
+                                                                    {d.time} — {hogCount} hog{hogCount !== 1 ? 's' : ''}
+                                                                </Text>
+                                                            </View>
+                                                        );
+                                                    })
                                                 }
                                             </View>
                                         </View>
@@ -195,9 +289,10 @@ export default function Results() {
 
                             <Text style={styles.placeholderContent}>
                                 {"\n"}Detailed Breakdown:
+                                {/* FIXED: Added .join('') to prevent array rendering warnings in React Native */}
                                 {Object.entries(resultData.details || {}).map(([behavior, count]) => (
                                     `\n- ${behavior}: ${count}`
-                                ))}
+                                )).join('')}
                             </Text>
                             
                         </DropdownItem>
@@ -245,9 +340,7 @@ export default function Results() {
                     <TouchableOpacity
                         style={styles.saveButton}
                         activeOpacity={0.8}
-                        onPress={() => {
-                            // TODO: add save functionality
-                        }}
+                        onPress={saveResultsAsPdf}
                     >
                         <Text style={styles.saveButtonText}>Save Results</Text>
                     </TouchableOpacity>
@@ -272,7 +365,6 @@ const styles = StyleSheet.create({
     },
     previewWrapper: {
         width: '100%',
-        // borderRadius: 16,
         overflow: 'hidden',
     },
     mediaPreview: {

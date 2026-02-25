@@ -54,13 +54,31 @@ def handle_upload(request):
 # --- VIDEO ANALYSIS LOGIC ---
 def analyze_video_data(video_path):
     cap = cv2.VideoCapture(video_path)
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30
+    INTERVAL_SECONDS = 2
+    frames_per_interval = int(fps * INTERVAL_SECONDS)
+    
     behavior_counts = {cls: 0 for cls in BEHAVIOR_CLASSES}
-
     track_history = defaultdict(lambda: deque(maxlen=15)) 
+    
+    idle_frames = defaultdict(int)
     lethargic_pigs = set()
-
     MOVEMENT_THRESHOLD = 10.0
+    IDLE_FRAMES_FOR_LETHARGY = int((fps / 5) * 10)
+    RESTING_BEHAVIORS = {'Lying', 'Sleeping'}
 
+    displacement_history = defaultdict(lambda: deque(maxlen=20))
+    limping_pigs = set()
+    LIMP_MEAN_MIN = 3.0       
+    LIMP_VARIANCE_THRESHOLD = 30.0
+
+    time_series = []
+
+    interval_pig_ids = set()
+    interval_lethargic_ids = set()
+    interval_limping_ids = set()
+    
+    current_interval = 0
     frame_count = 0
     
     while cap.isOpened():
@@ -68,6 +86,22 @@ def analyze_video_data(video_path):
         if not ret: break
         
         frame_count += 1
+
+        if frame_count > 0 and frame_count % frames_per_interval == 0:
+            time_label = f"{current_interval * INTERVAL_SECONDS}s"
+            time_series.append({
+                "time": time_label,
+                "pig_count": len(interval_pig_ids),
+                "lethargy": len(interval_lethargic_ids) > 0,
+                "lethargic_ids": list(interval_lethargic_ids),
+                "limping": len(interval_limping_ids) > 0,
+                "limping_ids": list(interval_limping_ids),
+            })
+            current_interval += 1
+            interval_pig_ids = set()
+            interval_lethargic_ids = set()
+            interval_limping_ids = set()
+
         if frame_count % 5 != 0: continue
 
         results = yolo_model.track(frame, persist=True, verbose=False, conf=0.3)
@@ -78,40 +112,72 @@ def analyze_video_data(video_path):
             
             for box, track_id in zip(boxes, track_ids):
                 x1, y1, x2, y2 = box
-                
                 cx = (x1 + x2) / 2.0
                 cy = (y1 + y2) / 2.0
 
-                track_history[track_id].append((cx, cy))
-                
-                if len(track_history[track_id]) == track_history[track_id].maxlen:
-                    old_cx, old_cy = track_history[track_id][0]
-                    displacement = math.sqrt((cx - old_cx)**2 + (cy - old_cy)**2)
-                    
-                    if displacement < MOVEMENT_THRESHOLD:
-                        lethargic_pigs.add(track_id)
+                # track_history[track_id].append((cx, cy))
+                interval_pig_ids.add(track_id)
 
                 pig_crop = frame[y1:y2, x1:x2]
+                current_behavior = None
                 if pig_crop.size > 0:
                     roi = cv2.resize(pig_crop, (224, 224))
                     roi = tf.keras.preprocessing.image.img_to_array(roi)
                     roi = np.expand_dims(roi, axis=0)
                     roi = roi / 255.0
-                    
                     preds = behavior_model.predict(roi, verbose=0)
                     top_idx = np.argmax(preds[0])
-                    behavior = BEHAVIOR_CLASSES[top_idx]
-                    
-                    behavior_counts[behavior] += 1
+                    current_behavior = BEHAVIOR_CLASSES[top_idx]
+                    behavior_counts[current_behavior] += 1
+
+                prev_pos = track_history[track_id][-1] if track_history[track_id] else None
+                track_history[track_id].append((cx, cy))
+                
+                if prev_pos is not None:
+                    displacement = math.sqrt((cx - prev_pos[0])**2 + (cy - prev_pos[1])**2)
+                    displacement_history[track_id].append(displacement)
+
+                    is_resting = current_behavior in RESTING_BEHAVIORS
+                    if displacement < MOVEMENT_THRESHOLD and not is_resting:
+                        idle_frames[track_id] += 1
+                    else:
+                        idle_frames[track_id] = 0 
+
+                    if idle_frames[track_id] >= IDLE_FRAMES_FOR_LETHARGY:
+                        lethargic_pigs.add(track_id)
+                        interval_lethargic_ids.add(track_id)
+
+                    if current_behavior == 'Walking' and len(displacement_history[track_id]) >= 10:
+                        displacements = list(displacement_history[track_id])
+                        mean_disp = sum(displacements) / len(displacements)
+                        variance = sum((d - mean_disp) ** 2 for d in displacements) / len(displacements)
+
+                        if mean_disp > LIMP_MEAN_MIN and variance > LIMP_VARIANCE_THRESHOLD:
+                            limping_pigs.add(track_id)
+                            interval_limping_ids.add(track_id)  
+
+    if interval_pig_ids:
+        time_label = f"{current_interval * INTERVAL_SECONDS}s"
+        time_series.append({
+            "time": time_label,
+            "pig_count": len(interval_pig_ids),
+            "lethargy": len(interval_lethargic_ids) > 0,
+            "lethargic_ids": list(interval_lethargic_ids),
+            "limping": len(interval_limping_ids) > 0,
+            "limping_ids": list(interval_limping_ids),
+    })
 
     cap.release()
     
-    if sum(behavior_counts.values()) > 0:
-        most_common = max(behavior_counts, key=behavior_counts.get)
-    else:
-        most_common = "No Pig Detected"
+    most_common = max(behavior_counts, key=behavior_counts.get) if sum(behavior_counts.values()) > 0 else "No Pig Detected"
+    return most_common, behavior_counts, len(lethargic_pigs), len(limping_pigs), time_series
+
+    # if sum(behavior_counts.values()) > 0:
+    #     most_common = max(behavior_counts, key=behavior_counts.get)
+    # else:
+    #     most_common = "No Pig Detected"
         
-    return most_common, behavior_counts, len(lethargic_pigs)
+    # return most_common, behavior_counts, len(lethargic_pigs)
 
 # --- IMAGE ANALYSIS LOGIC ---
 def analyze_image_data(image_path):
@@ -165,7 +231,7 @@ def analyze_video():
     print(f"Analyzing Video: {os.path.basename(file_path)}...")
     
     try:
-        result_text, detailed_counts, lethargic_count = analyze_video_data(file_path)
+        result_text, detailed_counts, lethargic_count, limping_count, time_series = analyze_video_data(file_path)
         
         print(f"Video Analysis Result: {result_text}")
         
@@ -174,7 +240,9 @@ def analyze_video():
             "media_type": "video",
             "primary_behavior": result_text,
             "details": detailed_counts,
-            "lethargy_flags": lethargic_count
+            "lethargy_flags": lethargic_count,
+            "limping_flags": limping_count,
+            "time_series": time_series
         })
     except Exception as e:
         print(f"Video Analysis Error: {e}")

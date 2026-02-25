@@ -13,11 +13,13 @@ interface AnalysisResult {
     primary_behavior: string;
     detected_pigs_count?: number; // Present in image results
     details: Record<string, number>;
-    lethargy_flags?: number; // Present in video results
+    lethargy_flags?: number;
+    limping_flags?: number;
+    time_series?: any[]; // Present in video results
 }
 
 // UPDATE THIS to your computer's local IP address (e.g., 'http://192.168.1.5:5000')
-const API_BASE_URL = 'http://192.168.0.160:5000'; 
+const API_BASE_URL = 'http://192.168.0.102:5000'; 
 
 export default function Results() {
     // Strictly type the expected params from the previous screen
@@ -129,7 +131,7 @@ export default function Results() {
                     </View>
                 ) : resultData ? (
                     <>
-                        {/* <Text style={styles.detectedTitle}>
+                        {/* <Text style={styles.detectedTitle}> 
                             Detected Behavior: {resultData.primary_behavior}
                         </Text> */}
 
@@ -139,15 +141,55 @@ export default function Results() {
                             </Text>
 
                             {resultData.lethargy_flags !== undefined && (
-                                <Text style={[
-                                    styles.placeholderContent, 
-                                    { 
-                                        color: resultData.lethargy_flags > 0 ? '#D32F2F' : '#388E3C', 
-                                        fontWeight: 'bold',
-                                        marginTop: 8
-                                    }
-                                ]}>
-                                    Lethargy Alerts: {resultData.lethargy_flags} {resultData.lethargy_flags > 0 ? '⚠️' : '✅'}
+                                <>
+                                    <Text style={[
+                                        styles.placeholderContent, 
+                                        { 
+                                            color: resultData.lethargy_flags > 0 ? '#D32F2F' : '#388E3C', 
+                                            fontWeight: 'bold',
+                                            marginTop: 8
+                                        }
+                                    ]}>
+                                        Lethargy Alerts: {resultData.lethargy_flags} {resultData.lethargy_flags > 0 ? '⚠️' : '✅'}
+                                    </Text>
+
+                                    {/* Show exactly when lethargy was triggered */}
+                                    {resultData.time_series && resultData.time_series.filter(d => d.lethargy).length > 0 && (
+                                        <View style={{ marginTop: 6 }}>
+                                            <Text style={[styles.placeholderContent, { color: '#D32F2F' }]}>
+                                                Flagged at:
+                                            </Text>
+                                            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+                                                {resultData.time_series
+                                                    .filter(d => d.lethargy)
+                                                    .map((d, i) => (
+                                                        <View key={i} style={{
+                                                            backgroundColor: '#FFEBEE',
+                                                            borderRadius: 12,
+                                                            paddingHorizontal: 10,
+                                                            paddingVertical: 4,
+                                                            borderWidth: 1,
+                                                            borderColor: '#D32F2F',
+                                                        }}>
+                                                            <Text style={{
+                                                                color: '#D32F2F',
+                                                                fontSize: 12,
+                                                                fontFamily: 'NunitoSans-SemiBold',
+                                                            }}>
+                                                                {d.time} — {d.lethargic_ids.length} hog{d.lethargic_ids.length > 1 ? 's' : ''}
+                                                            </Text>
+                                                        </View>
+                                                    ))
+                                                }
+                                            </View>
+                                        </View>
+                                    )}
+                                </>
+                            )}
+
+                            {resultData.limping_flags !== undefined && resultData.limping_flags > 0 && (
+                                <Text style={[styles.placeholderContent, { color: '#E65100', fontWeight: 'bold', marginTop: 8 }]}>
+                                    Limping Alerts: {resultData.limping_flags} 🦵⚠️
                                 </Text>
                             )}
 
@@ -184,6 +226,8 @@ export default function Results() {
                                     primary_behavior: resultData.primary_behavior,
                                     lethargy_flags: resultData.lethargy_flags,
                                     detected_pigs_count: resultData.detected_pigs_count,
+                                    time_series: JSON.stringify(resultData.time_series ?? []),
+                                    limping_flags: resultData.limping_flags,
                                 }
                             })}
                             activeOpacity={0.7}

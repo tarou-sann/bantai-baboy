@@ -23,7 +23,7 @@ interface AnalysisResult {
 }
 
 // UPDATE THIS to your computer's local IP address (e.g., 'http://192.168.1.5:5000')
-const API_BASE_URL = 'http://192.168.0.102:5000'; 
+const API_BASE_URL = 'http://192.168.0.161:5000'; 
 
 export default function Results() {
     // Strictly type the expected params from the previous screen
@@ -426,7 +426,7 @@ const styles = StyleSheet.create({
         fontFamily: 'NunitoSans-Regular',
     },
     scrollContent: {
-        paddingBottom: 24,
+        paddingBottom: 80,
     },
     analyticsTextButton: {
         marginTop: 8,
@@ -439,9 +439,13 @@ const styles = StyleSheet.create({
         fontFamily: 'NunitoSans-Bold',
     },
     bottomContainer: {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
         paddingHorizontal: 100,
         paddingVertical: 16,
-        backgroundColor: Colors.light.background,
+        backgroundColor: 'transparent',
     },
     saveButton: {
         backgroundColor: Colors.light.results,

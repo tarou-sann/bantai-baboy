@@ -1,10 +1,11 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
     View,
     Text,
     StyleSheet,
     ScrollView,
     Dimensions,
+    TouchableOpacity,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ArrowLeft } from 'phosphor-react-native';
@@ -14,6 +15,7 @@ import { DropdownItem } from '@/components/dropdown-item';
 import { Colors } from '@/theme/colors';
 
 const screenWidth = Dimensions.get('window').width;
+
 
 const chartConfig = {
     backgroundColor: Colors.light.background,
@@ -36,6 +38,8 @@ const chartConfig = {
 };
 
 export default function Analytics() {
+    const [summaryOpen, setSummaryOpen] = useState(false);
+    const [metricsOpen, setMetricsOpen] = useState(false);
     const router = useRouter();
     const params = useLocalSearchParams();
 
@@ -211,10 +215,8 @@ export default function Analytics() {
                 )}
 
 
-                {/* Summary Dropdown */}
-                {/* Summary */}
-                <View style={styles.summaryContainer}>
-                    <Text style={styles.summaryTitle}>Summary of Detection</Text>
+                {/* Summary of Detection */}
+                <DropdownItem title="Summary of Detection">
                     <Text style={styles.summaryText}>
                         Primary Behavior: <Text style={styles.summaryValue}>{primaryBehavior}</Text>
                     </Text>
@@ -222,27 +224,42 @@ export default function Analytics() {
                         Total Hogs Detected: <Text style={styles.summaryValue}>{detectedCount}</Text>
                     </Text>
                     <Text style={styles.summaryText}>
-                        Lethargy Alerts: <Text style={[
-                            styles.summaryValue,
-                            { color: lethargyFlags > 0 ? '#D32F2F' : '#388E3C' }
-                        ]}>
+                        Lethargy Alerts:{' '}
+                        <Text style={[styles.summaryValue, { color: lethargyFlags > 0 ? '#D32F2F' : '#388E3C' }]}>
                             {lethargyFlags} {lethargyFlags > 0 ? '⚠️' : '✅'}
                         </Text>
                     </Text>
-
                     <Text style={styles.summaryText}>
                         Limping Alerts:{' '}
                         <Text style={[styles.summaryValue, { color: limpingFlags > 0 ? '#E65100' : '#388E3C' }]}>
                             {limpingFlags} {limpingFlags > 0 ? '🦵⚠️' : '✅'}
                         </Text>
                     </Text>
-
                     {details && Object.entries(details).map(([behavior, count]) => (
                         <Text key={behavior} style={styles.summaryText}>
                             {behavior}: <Text style={styles.summaryValue}>{String(count)}</Text>
                         </Text>
                     ))}
-                </View>
+                </DropdownItem>
+
+                {/* Model Metrics */}
+                <DropdownItem title="Model Metrics" style={styles.metricsDropdown}>
+                    <Text style={styles.summaryText}>
+                        Precision: <Text style={styles.summaryValue}>— (placeholder)</Text>
+                    </Text>
+                    <Text style={styles.summaryText}>
+                        Recall: <Text style={styles.summaryValue}>— (placeholder)</Text>
+                    </Text>
+                    <Text style={styles.summaryText}>
+                        F1 Score: <Text style={styles.summaryValue}>— (placeholder)</Text>
+                    </Text>
+                    <Text style={styles.summaryText}>
+                        mAP: <Text style={styles.summaryValue}>— (placeholder)</Text>
+                    </Text>
+                    <Text style={styles.summaryText}>
+                        Inference Time: <Text style={styles.summaryValue}>— (placeholder)</Text>
+                    </Text>
+                </DropdownItem>
             </ScrollView>
         </View>
     );
@@ -314,7 +331,7 @@ const styles = StyleSheet.create({
         gap: 6,
     },
     lethargyBadge: {
-        backgroundColor: '#FFEBEE',
+        backgroundColor: Colors.light.background,
         borderRadius: 12,
         paddingHorizontal: 10,
         paddingVertical: 4,
@@ -326,8 +343,17 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontFamily: 'NunitoSans-SemiBold',
     },
-
-    summaryContainer: {
+    summaryText: {
+        fontSize: 14,
+        fontFamily: 'NunitoSans-Regular',
+        color: Colors.light.subtext,
+        marginBottom: 6,
+    },
+    summaryValue: {
+        fontFamily: 'NunitoSans-SemiBold',
+        color: Colors.light.text,
+    },
+    accordionHeader: {
         marginHorizontal: 16,
         marginTop: 8,
         padding: 16,
@@ -340,21 +366,36 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.08,
         shadowRadius: 4,
         elevation: 2,
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
     },
-    summaryTitle: {
+    accordionTitle: {
         fontSize: 16,
         fontFamily: 'NunitoSans-Bold',
         color: Colors.light.secondary,
-        marginBottom: 12,
     },
-    summaryText: {
-        fontSize: 14,
-        fontFamily: 'NunitoSans-Regular',
-        color: Colors.light.subtext,
-        marginBottom: 6,
+    accordionChevron: {
+        fontSize: 12,
+        color: Colors.light.secondary,
     },
-    summaryValue: {
-        fontFamily: 'NunitoSans-SemiBold',
-        color: Colors.light.text,
+    accordionBody: {
+        marginHorizontal: 16,
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+        backgroundColor: Colors.light.white,
+        borderBottomLeftRadius: 8,
+        borderBottomRightRadius: 8,
+        borderWidth: 1,
+        borderTopWidth: 0,
+        borderColor: Colors.light.white,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.06,
+        shadowRadius: 4,
+        elevation: 1,
+    },
+    metricsDropdown: {
+        marginTop: 0,
     },
 });

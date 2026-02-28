@@ -11,19 +11,44 @@ import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 
 // --- TYPES ---
+interface PigSummary {
+    pig_id: number;
+    predominant_behavior: string;
+    behavior_counts: Record<string, number>;
+    is_lethargic: boolean;
+    is_limping: boolean;
+}
+
+interface BehaviorBreakdown {
+    count: number;
+    pig_ids: number[];
+}
+
+interface TimeSeriesEntry {
+    time: string;
+    pig_count: number;
+    behavior_breakdown?: Record<string, BehaviorBreakdown>;
+    lethargy: boolean;
+    lethargic_ids: number[];
+    limping: boolean;
+    limping_ids: number[];
+}
+
 interface AnalysisResult {
     status: string;
     media_type: 'image' | 'video';
     primary_behavior: string;
     detected_pigs_count?: number; // Present in image results
+    total_unique_pigs?: number; // Present in video results
+    pig_summaries?: PigSummary[]; // Present in video results
     details: Record<string, number>;
     lethargy_flags?: number;
     limping_flags?: number;
-    time_series?: any[]; // Present in video results
+    time_series?: TimeSeriesEntry[]; // Present in video results
 }
 
 // UPDATE THIS to your computer's local IP address (e.g., 'http://192.168.1.5:5000')
-const API_BASE_URL = 'http://192.168.0.161:5000'; 
+const API_BASE_URL = "http://192.168.0.102:5000"; 
 
 export default function Results() {
     // Strictly type the expected params from the previous screen
@@ -67,10 +92,10 @@ export default function Results() {
                 headers: {
                     'Content-Type': 'multipart/form-data',
                 },
-                signal: controller.signal, // FIXED: Added missing signal so the abort controller actually works
+                signal: controller.signal,
             });
 
-            clearTimeout(timeoutId); // FIXED: Added semicolon
+            clearTimeout(timeoutId);
 
             const data = await response.json();
 
@@ -94,14 +119,64 @@ export default function Results() {
             ([k, v]) => `<tr><td style="padding:6px 8px;border:1px solid #eee">${k}</td><td style="padding:6px 8px;border:1px solid #eee;text-align:right">${v}</td></tr>`
         ).join('');
 
+        // NEW: Add pig summaries table
+        let pigSummariesHtml = '';
+        if (resultData.pig_summaries && resultData.pig_summaries.length > 0) {
+            const pigRows = resultData.pig_summaries.map((pig) => {
+                const behaviorsList = Object.entries(pig.behavior_counts)
+                    .map(([b, c]) => `${b}: ${c}`)
+                    .join(', ');
+                const alerts = [];
+                if (pig.is_lethargic) alerts.push('Lethargic');
+                if (pig.is_limping) alerts.push('Limping');
+                const alertText = alerts.length > 0 ? alerts.join(', ') : 'None';
+                
+                return `<tr>
+                    <td style="padding:6px 8px;border:1px solid #eee">Pig #${pig.pig_id}</td>
+                    <td style="padding:6px 8px;border:1px solid #eee">${pig.predominant_behavior}</td>
+                    <td style="padding:6px 8px;border:1px solid #eee;font-size:11px">${behaviorsList}</td>
+                    <td style="padding:6px 8px;border:1px solid #eee;text-align:center">${alertText}</td>
+                </tr>`;
+            }).join('');
+
+            pigSummariesHtml = `
+                <h3>Individual Pig Summary</h3>
+                <table style="border-collapse:collapse;width:100%;margin-top:8px"> 
+                    <thead>
+                        <tr>
+                            <th style="text-align:left;padding:6px 8px;border:1px solid #eee">Pig ID</th>
+                            <th style="text-align:left;padding:6px 8px;border:1px solid #eee">Predominant</th>
+                            <th style="text-align:left;padding:6px 8px;border:1px solid #eee">All Behaviors</th>
+                            <th style="text-align:center;padding:6px 8px;border:1px solid #eee">Alerts</th>
+                        </tr>
+                    </thead>
+                    <tbody>${pigRows}</tbody>
+                </table>
+            `;
+        }
+
         let timeSeriesHtml = '';
         if (resultData.time_series && resultData.time_series.length > 0) {
-            const tsRows = resultData.time_series.map((d: any) => {
+            const tsRows = resultData.time_series.map((d: TimeSeriesEntry) => {
                 const leth = d.lethargy ? 'Yes' : 'No';
                 const limp = d.limping ? 'Yes' : 'No';
-                // FIXED: Added optional chaining to prevent crashes
-                const count = d.pig_count ?? (d.lethargic_ids ? d.lethargic_ids.length : '');
-                return `<tr><td style="padding:6px 8px;border:1px solid #eee">${d.time}</td><td style="padding:6px 8px;border:1px solid #eee;text-align:right">${count}</td><td style="padding:6px 8px;border:1px solid #eee;text-align:center">${leth}</td><td style="padding:6px 8px;border:1px solid #eee;text-align:center">${limp}</td></tr>`;
+                const count = d.pig_count ?? 0;
+                
+                // NEW: Show behavior breakdown in time series
+                let behaviorBreakdownText = '';
+                if (d.behavior_breakdown) {
+                    behaviorBreakdownText = Object.entries(d.behavior_breakdown)
+                        .map(([behavior, data]) => `${behavior}: ${data.count}`)
+                        .join(', ');
+                }
+                
+                return `<tr>
+                    <td style="padding:6px 8px;border:1px solid #eee">${d.time}</td>
+                    <td style="padding:6px 8px;border:1px solid #eee;text-align:right">${count}</td>
+                    <td style="padding:6px 8px;border:1px solid #eee;font-size:11px">${behaviorBreakdownText}</td>
+                    <td style="padding:6px 8px;border:1px solid #eee;text-align:center">${leth}</td>
+                    <td style="padding:6px 8px;border:1px solid #eee;text-align:center">${limp}</td>
+                </tr>`;
             }).join('');
 
             timeSeriesHtml = `
@@ -111,6 +186,7 @@ export default function Results() {
                         <tr>
                             <th style="text-align:left;padding:6px 8px;border:1px solid #eee">Time</th>
                             <th style="text-align:right;padding:6px 8px;border:1px solid #eee">Pig Count</th>
+                            <th style="text-align:left;padding:6px 8px;border:1px solid #eee">Behaviors</th>
                             <th style="text-align:center;padding:6px 8px;border:1px solid #eee">Lethargy</th>
                             <th style="text-align:center;padding:6px 8px;border:1px solid #eee">Limping</th>
                         </tr>
@@ -137,7 +213,7 @@ export default function Results() {
                     <p><strong>Generated:</strong> ${new Date().toLocaleString()}</p>
                     <h3>Summary</h3>
                     <p>Primary Behavior: <strong>${resultData.primary_behavior}</strong></p>
-                    <p>Detected Hogs: <strong>${resultData.detected_pigs_count ?? 'N/A'}</strong></p>
+                    <p>Detected Hogs: <strong>${resultData.detected_pigs_count ?? resultData.total_unique_pigs ?? 'N/A'}</strong></p>
                     <p>Lethargy Alerts: <strong>${resultData.lethargy_flags ?? 0}</strong></p>
                     <p>Limping Alerts: <strong>${resultData.limping_flags ?? 0}</strong></p>
 
@@ -149,6 +225,7 @@ export default function Results() {
                         <tbody>${rows}</tbody>
                     </table>
 
+                    ${pigSummariesHtml}
                     ${timeSeriesHtml}
 
                 </body>
@@ -157,9 +234,6 @@ export default function Results() {
 
         try {
             const { uri } = await Print.printToFileAsync({ html });
-            // const dest = FileSystem.documentDirectory + `bantai-report-${Date.now()}.pdf`;
-            // await FileSystem.moveAsync({ from: uri, to: dest });
-            // await Sharing.shareAsync(dest);
 
             const fileName = `bantai-report-${Date.now()}.pdf`;
             const destFile = new File(Paths.document, fileName);
@@ -183,7 +257,6 @@ export default function Results() {
                 onLeftIconPress={() => router.back()}
             />
 
-            {/* FIXED: Applied contentContainerStyle for paddingBottom */}
             <ScrollView style={styles.content} contentContainerStyle={styles.scrollContent}>
                 {/* Media Preview */}
                 <View style={styles.previewWrapper}>
@@ -207,10 +280,11 @@ export default function Results() {
                             <View style={styles.placeholderMedia}>
                                 <Text style={styles.placeholderText}>Video Preview</Text>
                             </View>
-                            {resultData?.detected_pigs_count !== undefined && (
+                            {/* NEW: Show total unique pigs for videos */}
+                            {resultData?.total_unique_pigs !== undefined && (
                                 <View style={styles.hogsBadge}>
                                     <Text style={styles.hogsBadgeText}>
-                                        Detected Hogs: {resultData.detected_pigs_count}
+                                        Total Unique Hogs: {resultData.total_unique_pigs}
                                     </Text>
                                 </View>
                             )}
@@ -229,6 +303,45 @@ export default function Results() {
                             <Text style={styles.placeholderContent}>
                                 Primary Behavior: {resultData.primary_behavior}
                             </Text>
+
+                            {/* NEW: Show individual pig summaries */}
+                            {resultData.pig_summaries && resultData.pig_summaries.length > 0 && (
+                                <View style={{ marginTop: 12, marginBottom: 8 }}>
+                                    <Text style={[styles.placeholderContent, { fontWeight: 'bold', marginBottom: 8 }]}>
+                                        Individual Pigs ({resultData.total_unique_pigs} total):
+                                    </Text>
+                                    {resultData.pig_summaries.map((pig, index) => (
+                                        <View 
+                                            key={pig.pig_id} 
+                                            style={{
+                                                backgroundColor: '#f5f5f5',
+                                                padding: 10,
+                                                borderRadius: 8,
+                                                marginBottom: 8,
+                                                borderLeftWidth: 3,
+                                                borderLeftColor: pig.is_lethargic || pig.is_limping ? '#D32F2F' : '#388E3C',
+                                            }}
+                                        >
+                                            <Text style={[styles.placeholderContent, { fontWeight: 'bold' }]}>
+                                                Pig #{pig.pig_id}
+                                            </Text>
+                                            <Text style={styles.placeholderContent}>
+                                                Main behavior: {pig.predominant_behavior}
+                                            </Text>
+                                            <Text style={[styles.placeholderContent, { fontSize: 12, marginTop: 4 }]}>
+                                                All behaviors: {Object.entries(pig.behavior_counts)
+                                                    .map(([b, c]) => `${b} (${c})`)
+                                                    .join(', ')}
+                                            </Text>
+                                            {(pig.is_lethargic || pig.is_limping) && (
+                                                <Text style={[styles.placeholderContent, { color: '#D32F2F', marginTop: 4 }]}>
+                                                    ⚠️ {pig.is_lethargic ? 'Lethargic ' : ''}{pig.is_limping ? 'Limping' : ''}
+                                                </Text>
+                                            )}
+                                        </View>
+                                    ))}
+                                </View>
+                            )}
 
                             {resultData.lethargy_flags !== undefined && (
                                 <>
@@ -253,7 +366,6 @@ export default function Results() {
                                                 {resultData.time_series
                                                     .filter(d => d.lethargy)
                                                     .map((d, i) => {
-                                                        // FIXED: Added safety check to prevent crash if lethargic_ids is missing
                                                         const hogCount = d.lethargic_ids?.length || 0; 
                                                         return (
                                                             <View key={i} style={{
@@ -288,8 +400,7 @@ export default function Results() {
                             )}
 
                             <Text style={styles.placeholderContent}>
-                                {"\n"}Detailed Breakdown:
-                                {/* FIXED: Added .join('') to prevent array rendering warnings in React Native */}
+                                {"\n"}Overall Behavior Counts:
                                 {Object.entries(resultData.details || {}).map(([behavior, count]) => (
                                     `\n- ${behavior}: ${count}`
                                 )).join('')}
@@ -320,9 +431,10 @@ export default function Results() {
                                     details: JSON.stringify(resultData.details),
                                     primary_behavior: resultData.primary_behavior,
                                     lethargy_flags: resultData.lethargy_flags,
-                                    detected_pigs_count: resultData.detected_pigs_count,
+                                    detected_pigs_count: resultData.detected_pigs_count || resultData.total_unique_pigs,
                                     time_series: JSON.stringify(resultData.time_series ?? []),
                                     limping_flags: resultData.limping_flags,
+                                    pig_summaries: JSON.stringify(resultData.pig_summaries ?? []),
                                 }
                             })}
                             activeOpacity={0.7}
@@ -426,7 +538,7 @@ const styles = StyleSheet.create({
         fontFamily: 'NunitoSans-Regular',
     },
     scrollContent: {
-        paddingBottom: 80,
+        paddingBottom: 24,
     },
     analyticsTextButton: {
         marginTop: 8,
@@ -439,13 +551,9 @@ const styles = StyleSheet.create({
         fontFamily: 'NunitoSans-Bold',
     },
     bottomContainer: {
-        position: 'absolute',
-        bottom: 0,
-        left: 0,
-        right: 0,
         paddingHorizontal: 100,
         paddingVertical: 16,
-        backgroundColor: 'transparent',
+        backgroundColor: Colors.light.background,
     },
     saveButton: {
         backgroundColor: Colors.light.results,

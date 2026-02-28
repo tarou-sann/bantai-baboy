@@ -58,7 +58,12 @@ def analyze_video_data(video_path):
     INTERVAL_SECONDS = 2
     frames_per_interval = int(fps * INTERVAL_SECONDS)
     
+    # Overall behavior counts (legacy support)
     behavior_counts = {cls: 0 for cls in BEHAVIOR_CLASSES}
+    
+    # NEW: Track each pig's behaviors throughout the video
+    pig_behavior_history = defaultdict(lambda: defaultdict(int))  # pig_id -> {behavior: count}
+    
     track_history = defaultdict(lambda: deque(maxlen=15)) 
     
     idle_frames = defaultdict(int)
@@ -74,6 +79,8 @@ def analyze_video_data(video_path):
 
     time_series = []
 
+    # NEW: Track current behaviors in this interval
+    interval_pig_behaviors = defaultdict(str)  # pig_id -> current_behavior
     interval_pig_ids = set()
     interval_lethargic_ids = set()
     interval_limping_ids = set()
@@ -87,18 +94,34 @@ def analyze_video_data(video_path):
         
         frame_count += 1
 
+        # Save interval data before resetting
         if frame_count > 0 and frame_count % frames_per_interval == 0:
             time_label = f"{current_interval * INTERVAL_SECONDS}s"
+            
+            # NEW: Create behavior summary for this interval
+            behavior_summary = defaultdict(list)  # behavior -> [pig_ids]
+            for pig_id, behavior in interval_pig_behaviors.items():
+                behavior_summary[behavior].append(pig_id)
+            
             time_series.append({
                 "time": time_label,
                 "pig_count": len(interval_pig_ids),
+                "behavior_breakdown": {
+                    behavior: {
+                        "count": len(pigs),
+                        "pig_ids": sorted(pigs)
+                    }
+                    for behavior, pigs in behavior_summary.items()
+                },
                 "lethargy": len(interval_lethargic_ids) > 0,
-                "lethargic_ids": list(interval_lethargic_ids),
+                "lethargic_ids": sorted(list(interval_lethargic_ids)),
                 "limping": len(interval_limping_ids) > 0,
-                "limping_ids": list(interval_limping_ids),
+                "limping_ids": sorted(list(interval_limping_ids)),
             })
+            
             current_interval += 1
             interval_pig_ids = set()
+            interval_pig_behaviors = defaultdict(str)
             interval_lethargic_ids = set()
             interval_limping_ids = set()
 
@@ -115,7 +138,6 @@ def analyze_video_data(video_path):
                 cx = (x1 + x2) / 2.0
                 cy = (y1 + y2) / 2.0
 
-                # track_history[track_id].append((cx, cy))
                 interval_pig_ids.add(track_id)
 
                 pig_crop = frame[y1:y2, x1:x2]
@@ -128,7 +150,13 @@ def analyze_video_data(video_path):
                     preds = behavior_model.predict(roi, verbose=0)
                     top_idx = np.argmax(preds[0])
                     current_behavior = BEHAVIOR_CLASSES[top_idx]
+                    
+                    # Update counts
                     behavior_counts[current_behavior] += 1
+                    pig_behavior_history[track_id][current_behavior] += 1
+                    
+                    # NEW: Track most recent behavior for this pig in this interval
+                    interval_pig_behaviors[track_id] = current_behavior
 
                 prev_pos = track_history[track_id][-1] if track_history[track_id] else None
                 track_history[track_id].append((cx, cy))
@@ -156,28 +184,58 @@ def analyze_video_data(video_path):
                             limping_pigs.add(track_id)
                             interval_limping_ids.add(track_id)  
 
+    # Handle the last interval if there's remaining data
     if interval_pig_ids:
         time_label = f"{current_interval * INTERVAL_SECONDS}s"
+        
+        behavior_summary = defaultdict(list)
+        for pig_id, behavior in interval_pig_behaviors.items():
+            behavior_summary[behavior].append(pig_id)
+        
         time_series.append({
             "time": time_label,
             "pig_count": len(interval_pig_ids),
+            "behavior_breakdown": {
+                behavior: {
+                    "count": len(pigs),
+                    "pig_ids": sorted(pigs)
+                }
+                for behavior, pigs in behavior_summary.items()
+            },
             "lethargy": len(interval_lethargic_ids) > 0,
-            "lethargic_ids": list(interval_lethargic_ids),
+            "lethargic_ids": sorted(list(interval_lethargic_ids)),
             "limping": len(interval_limping_ids) > 0,
-            "limping_ids": list(interval_limping_ids),
-    })
+            "limping_ids": sorted(list(interval_limping_ids)),
+        })
 
     cap.release()
     
+    # NEW: Create overall pig summary
+    pig_summaries = []
+    for pig_id, behaviors in pig_behavior_history.items():
+        predominant_behavior = max(behaviors, key=behaviors.get)
+        pig_summaries.append({
+            "pig_id": pig_id,
+            "predominant_behavior": predominant_behavior,
+            "behavior_counts": dict(behaviors),
+            "is_lethargic": pig_id in lethargic_pigs,
+            "is_limping": pig_id in limping_pigs
+        })
+    
+    # Sort by pig_id for consistency
+    pig_summaries.sort(key=lambda x: x["pig_id"])
+    
     most_common = max(behavior_counts, key=behavior_counts.get) if sum(behavior_counts.values()) > 0 else "No Pig Detected"
-    return most_common, behavior_counts, len(lethargic_pigs), len(limping_pigs), time_series
-
-    # if sum(behavior_counts.values()) > 0:
-    #     most_common = max(behavior_counts, key=behavior_counts.get)
-    # else:
-    #     most_common = "No Pig Detected"
-        
-    # return most_common, behavior_counts, len(lethargic_pigs)
+    
+    return {
+        "primary_behavior": most_common,
+        "overall_behavior_counts": behavior_counts,
+        "total_unique_pigs": len(pig_behavior_history),
+        "pig_summaries": pig_summaries,
+        "lethargy_flags": len(lethargic_pigs),
+        "limping_flags": len(limping_pigs),
+        "time_series": time_series
+    }
 
 # --- IMAGE ANALYSIS LOGIC ---
 def analyze_image_data(image_path):
@@ -231,18 +289,21 @@ def analyze_video():
     print(f"Analyzing Video: {os.path.basename(file_path)}...")
     
     try:
-        result_text, detailed_counts, lethargic_count, limping_count, time_series = analyze_video_data(file_path)
+        result = analyze_video_data(file_path)
         
-        print(f"Video Analysis Result: {result_text}")
+        print(f"Video Analysis Result: {result['primary_behavior']}")
+        print(f"Total Unique Pigs Detected: {result['total_unique_pigs']}")
         
         return jsonify({
             "status": "success",
             "media_type": "video",
-            "primary_behavior": result_text,
-            "details": detailed_counts,
-            "lethargy_flags": lethargic_count,
-            "limping_flags": limping_count,
-            "time_series": time_series
+            "primary_behavior": result["primary_behavior"],
+            "details": result["overall_behavior_counts"],
+            "total_unique_pigs": result["total_unique_pigs"],
+            "pig_summaries": result["pig_summaries"],
+            "lethargy_flags": result["lethargy_flags"],
+            "limping_flags": result["limping_flags"],
+            "time_series": result["time_series"]
         })
     except Exception as e:
         print(f"Video Analysis Error: {e}")

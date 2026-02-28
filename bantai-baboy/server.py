@@ -342,5 +342,106 @@ def analyze_image():
             os.remove(file_path)
 
 
+@app.route('/live-detect', methods=['POST'])
+def live_detect():
+    """
+    OPTIMIZED: Real-time detection endpoint for live camera feed.
+    Returns bounding boxes and behavior classifications for each detected pig.
+    """
+    file_path, error_response, status_code = handle_upload(request)
+    if error_response:
+        return error_response, status_code
+    
+    try:
+        import time
+        start_time = time.time()
+        
+        img = cv2.imread(file_path)
+        if img is None:
+            return jsonify({"error": "Could not read image"}), 400
+
+        # OPTIMIZATION 1: Resize image for faster processing (optional - comment out if accuracy is more important)
+        original_height, original_width = img.shape[:2]
+        max_dimension = 640  # Process at lower resolution for speed
+        if max(original_width, original_height) > max_dimension:
+            scale = max_dimension / max(original_width, original_height)
+            new_width = int(original_width * scale)
+            new_height = int(original_height * scale)
+            img_resized = cv2.resize(img, (new_width, new_height))
+            scale_back_x = original_width / new_width
+            scale_back_y = original_height / new_height
+        else:
+            img_resized = img
+            scale_back_x = 1.0
+            scale_back_y = 1.0
+
+        frame_height, frame_width = img_resized.shape[:2]
+        detections = []
+        
+        # OPTIMIZATION 2: Lower confidence threshold for live detection (faster, detects more)
+        results = yolo_model(img_resized, conf=0.25, verbose=False)  # Was 0.3, now 0.25
+        
+        if len(results[0].boxes) > 0:
+            boxes = results[0].boxes.xyxy.cpu().numpy().astype(int)
+            
+            for box in boxes:
+                x1, y1, x2, y2 = box
+                
+                # Crop pig region
+                pig_crop = img_resized[y1:y2, x1:x2]
+                
+                if pig_crop.size > 0:
+                    # OPTIMIZATION 3: Skip very small detections (likely false positives)
+                    box_area = (x2 - x1) * (y2 - y1)
+                    if box_area < 1000:  # Skip tiny boxes
+                        continue
+                    
+                    # Classify behavior with MobileNet
+                    roi = cv2.resize(pig_crop, (224, 224))
+                    roi = tf.keras.preprocessing.image.img_to_array(roi)
+                    roi = np.expand_dims(roi, axis=0)
+                    roi = roi / 255.0
+                    
+                    preds = behavior_model.predict(roi, verbose=0)
+                    top_idx = np.argmax(preds[0])
+                    behavior = BEHAVIOR_CLASSES[top_idx]
+                    confidence = float(preds[0][top_idx])
+                    
+                    # Scale boxes back to original size if we resized
+                    scaled_box = [
+                        int(x1 * scale_back_x),
+                        int(y1 * scale_back_y),
+                        int(x2 * scale_back_x),
+                        int(y2 * scale_back_y)
+                    ]
+                    
+                    detections.append({
+                        "box": scaled_box,
+                        "behavior": behavior,
+                        "confidence": confidence
+                    })
+        
+        # Calculate FPS
+        processing_time = time.time() - start_time
+        fps = 1.0 / processing_time if processing_time > 0 else 0
+        
+        print(f"Live detection: {len(detections)} pigs in {processing_time*1000:.0f}ms ({fps:.1f} FPS)")
+        
+        return jsonify({
+            "detections": detections,
+            "frame_width": original_width,  # Return original dimensions
+            "frame_height": original_height,
+            "fps": fps,
+            "processing_time_ms": processing_time * 1000
+        })
+        
+    except Exception as e:
+        print(f"Live detection error: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)

@@ -269,6 +269,15 @@ export default function Index() {
           </Text>
         </View>
 
+        {/* NEW: Live Camera Button */}
+        <TouchableOpacity
+          style={styles.liveCameraButton}
+          onPress={() => router.push('/live-camera' as any)}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.liveCameraText}>📹 Open Live Camera</Text>
+        </TouchableOpacity>
+
         {isUploading && (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color={Colors.light.primary} />
@@ -301,18 +310,6 @@ export default function Index() {
               {file.uri && file.type === "video" && (
                 <Text style={styles.videoInfo}>Video file ready</Text>
               )}
-
-              {/* <TouchableOpacity
-                style={styles.seeResultsButton}
-                onPress={() => navigateToResults(file)}
-              >
-                <Text style={styles.seeResultsText}>See Results  </Text>
-                <ArrowRight
-                  size={18}
-                  color={Colors.light.secondary}
-                  weight="bold"
-                />
-              </TouchableOpacity> */}
             </DropdownItem>
           ))
         )}
@@ -344,6 +341,25 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "flex-start",
     justifyContent: "space-between",
+  },
+  liveCameraButton: {
+    marginHorizontal: 20,
+    marginBottom: 16,
+    backgroundColor: Colors.light.primary,
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  liveCameraText: {
+    color: 'white',
+    fontSize: 18,
+    fontFamily: 'NunitoSans-Bold',
   },
   emptyText: {
     textAlign: "center",

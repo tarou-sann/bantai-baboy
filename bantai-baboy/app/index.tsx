@@ -272,7 +272,7 @@ export default function Index() {
         {/* NEW: Live Camera Button */}
         <TouchableOpacity
           style={styles.liveCameraButton}
-          onPress={() => router.push('/live-camera' as any)}
+          onPress={() => router.push('/live-camera-WEBSOCKET' as any)}
           activeOpacity={0.8}
         >
           <Text style={styles.liveCameraText}>📹 Open Live Camera</Text>

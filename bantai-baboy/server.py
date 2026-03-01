@@ -23,6 +23,26 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 yolo_model = None
 behavior_model = None
 
+# --- ID MAPPING FOR CLEANER PIG IDs ---
+id_mapper = {}  # Maps ByteTrack IDs to clean sequential IDs
+next_clean_id = 1  # Counter for assigning clean IDs
+
+def get_clean_pig_id(bytetrack_id):
+    """Convert ByteTrack's sequential ID to a clean remapped ID (1, 2, 3...)"""
+    global next_clean_id
+    
+    if bytetrack_id not in id_mapper:
+        id_mapper[bytetrack_id] = next_clean_id
+        next_clean_id += 1
+    
+    return id_mapper[bytetrack_id]
+
+def reset_id_mapper():
+    """Reset the ID mapper (call at start of each video or live session)"""
+    global id_mapper, next_clean_id
+    id_mapper = {}
+    next_clean_id = 1
+
 # --- LOAD MODELS FUNCTION ---
 def load_models():
     global yolo_model, behavior_model
@@ -53,6 +73,9 @@ def handle_upload(request):
 
 # --- VIDEO ANALYSIS LOGIC ---
 def analyze_video_data(video_path):
+    # Reset ID mapper for each new video
+    reset_id_mapper()
+    
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30
     INTERVAL_SECONDS = 2
@@ -131,14 +154,17 @@ def analyze_video_data(video_path):
         
         if results[0].boxes is not None and results[0].boxes.id is not None:
             boxes = results[0].boxes.xyxy.cpu().numpy().astype(int)
-            track_ids = results[0].boxes.id.int().cpu().tolist()
+            bytetrack_ids = results[0].boxes.id.int().cpu().tolist()
             
-            for box, track_id in zip(boxes, track_ids):
+            for box, bytetrack_id in zip(boxes, bytetrack_ids):
+                # Remap ByteTrack ID to clean sequential ID
+                clean_id = get_clean_pig_id(bytetrack_id)
+                
                 x1, y1, x2, y2 = box
                 cx = (x1 + x2) / 2.0
                 cy = (y1 + y2) / 2.0
 
-                interval_pig_ids.add(track_id)
+                interval_pig_ids.add(clean_id)
 
                 pig_crop = frame[y1:y2, x1:x2]
                 current_behavior = None
@@ -153,36 +179,36 @@ def analyze_video_data(video_path):
                     
                     # Update counts
                     behavior_counts[current_behavior] += 1
-                    pig_behavior_history[track_id][current_behavior] += 1
+                    pig_behavior_history[clean_id][current_behavior] += 1
                     
                     # NEW: Track most recent behavior for this pig in this interval
-                    interval_pig_behaviors[track_id] = current_behavior
+                    interval_pig_behaviors[clean_id] = current_behavior
 
-                prev_pos = track_history[track_id][-1] if track_history[track_id] else None
-                track_history[track_id].append((cx, cy))
+                prev_pos = track_history[clean_id][-1] if track_history[clean_id] else None
+                track_history[clean_id].append((cx, cy))
                 
                 if prev_pos is not None:
                     displacement = math.sqrt((cx - prev_pos[0])**2 + (cy - prev_pos[1])**2)
-                    displacement_history[track_id].append(displacement)
+                    displacement_history[clean_id].append(displacement)
 
                     is_resting = current_behavior in RESTING_BEHAVIORS
                     if displacement < MOVEMENT_THRESHOLD and not is_resting:
-                        idle_frames[track_id] += 1
+                        idle_frames[clean_id] += 1
                     else:
-                        idle_frames[track_id] = 0 
+                        idle_frames[clean_id] = 0 
 
-                    if idle_frames[track_id] >= IDLE_FRAMES_FOR_LETHARGY:
-                        lethargic_pigs.add(track_id)
-                        interval_lethargic_ids.add(track_id)
+                    if idle_frames[clean_id] >= IDLE_FRAMES_FOR_LETHARGY:
+                        lethargic_pigs.add(clean_id)
+                        interval_lethargic_ids.add(clean_id)
 
-                    if current_behavior == 'Walking' and len(displacement_history[track_id]) >= 10:
-                        displacements = list(displacement_history[track_id])
+                    if current_behavior == 'Walking' and len(displacement_history[clean_id]) >= 10:
+                        displacements = list(displacement_history[clean_id])
                         mean_disp = sum(displacements) / len(displacements)
                         variance = sum((d - mean_disp) ** 2 for d in displacements) / len(displacements)
 
                         if mean_disp > LIMP_MEAN_MIN and variance > LIMP_VARIANCE_THRESHOLD:
-                            limping_pigs.add(track_id)
-                            interval_limping_ids.add(track_id)  
+                            limping_pigs.add(clean_id)
+                            interval_limping_ids.add(clean_id)  
 
     # Handle the last interval if there's remaining data
     if interval_pig_ids:
@@ -226,6 +252,8 @@ def analyze_video_data(video_path):
     pig_summaries.sort(key=lambda x: x["pig_id"])
     
     most_common = max(behavior_counts, key=behavior_counts.get) if sum(behavior_counts.values()) > 0 else "No Pig Detected"
+    
+    print(f"ID Mapping: {len(id_mapper)} unique pigs tracked (ByteTrack IDs: {list(id_mapper.keys())[:10]}...)")
     
     return {
         "primary_behavior": most_common,
@@ -347,6 +375,7 @@ def live_detect():
     """
     OPTIMIZED: Real-time detection endpoint for live camera feed.
     Returns bounding boxes and behavior classifications for each detected pig.
+    Uses YOLO tracking to maintain consistent pig IDs across frames.
     """
     file_path, error_response, status_code = handle_upload(request)
     if error_response:
@@ -360,7 +389,7 @@ def live_detect():
         if img is None:
             return jsonify({"error": "Could not read image"}), 400
 
-        # OPTIMIZATION 1: Resize image for faster processing (optional - comment out if accuracy is more important)
+        # OPTIMIZATION 1: Resize image for faster processing
         original_height, original_width = img.shape[:2]
         max_dimension = 640  # Process at lower resolution for speed
         if max(original_width, original_height) > max_dimension:
@@ -378,20 +407,24 @@ def live_detect():
         frame_height, frame_width = img_resized.shape[:2]
         detections = []
         
-        # OPTIMIZATION 2: Lower confidence threshold for live detection (faster, detects more)
-        results = yolo_model(img_resized, conf=0.25, verbose=False)  # Was 0.3, now 0.25
+        # OPTIMIZATION 2: Use tracking for consistent IDs across frames
+        results = yolo_model.track(img_resized, persist=True, conf=0.25, verbose=False)
         
-        if len(results[0].boxes) > 0:
+        if results[0].boxes is not None and results[0].boxes.id is not None:
             boxes = results[0].boxes.xyxy.cpu().numpy().astype(int)
+            bytetrack_ids = results[0].boxes.id.int().cpu().tolist()
             
-            for box in boxes:
+            for box, bytetrack_id in zip(boxes, bytetrack_ids):
+                # Remap to clean sequential IDs
+                clean_id = get_clean_pig_id(bytetrack_id)
+                
                 x1, y1, x2, y2 = box
                 
                 # Crop pig region
                 pig_crop = img_resized[y1:y2, x1:x2]
                 
                 if pig_crop.size > 0:
-                    # OPTIMIZATION 3: Skip very small detections (likely false positives)
+                    # OPTIMIZATION 3: Skip very small detections
                     box_area = (x2 - x1) * (y2 - y1)
                     if box_area < 1000:  # Skip tiny boxes
                         continue
@@ -418,21 +451,23 @@ def live_detect():
                     detections.append({
                         "box": scaled_box,
                         "behavior": behavior,
-                        "confidence": confidence
+                        "confidence": confidence,
+                        "pig_id": clean_id  # Now includes clean pig ID!
                     })
         
         # Calculate FPS
         processing_time = time.time() - start_time
         fps = 1.0 / processing_time if processing_time > 0 else 0
         
-        print(f"Live detection: {len(detections)} pigs in {processing_time*1000:.0f}ms ({fps:.1f} FPS)")
+        print(f"Live detection: {len(detections)} pigs in {processing_time*1000:.0f}ms ({fps:.1f} FPS) - IDs: {[d['pig_id'] for d in detections]}")
         
         return jsonify({
             "detections": detections,
             "frame_width": original_width,  # Return original dimensions
             "frame_height": original_height,
             "fps": fps,
-            "processing_time_ms": processing_time * 1000
+            "processing_time_ms": processing_time * 1000,
+            "total_tracked_pigs": len(id_mapper)  # Total unique pigs seen so far
         })
         
     except Exception as e:
@@ -441,6 +476,13 @@ def live_detect():
     finally:
         if os.path.exists(file_path):
             os.remove(file_path)
+
+
+@app.route('/reset-tracking', methods=['POST'])
+def reset_tracking():
+    """Reset the pig ID tracking for a new live session"""
+    reset_id_mapper()
+    return jsonify({"status": "success", "message": "Tracking IDs reset"})
 
 
 if __name__ == '__main__':

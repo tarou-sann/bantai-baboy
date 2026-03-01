@@ -48,7 +48,7 @@ interface AnalysisResult {
 }
 
 // UPDATE THIS to your computer's local IP address (e.g., 'http://192.168.1.5:5000')
-const API_BASE_URL = "http://192.168.0.102:5000"; 
+const API_BASE_URL = "http://192.168.0.100:5000"; 
 
 export default function Results() {
     // Strictly type the expected params from the previous screen

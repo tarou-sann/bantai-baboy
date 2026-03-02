@@ -3,13 +3,14 @@ import { View, Text, StyleSheet, ScrollView, Image as RNImage, ActivityIndicator
 import { AppBar } from '@/components/appbar';
 import { DropdownItem } from '@/components/dropdown-item';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ArrowLeft } from 'phosphor-react-native';
+import { ArrowLeft, Info } from 'phosphor-react-native';
 import { Colors } from '@/theme/colors';
 // import * as FileSystem from 'expo-file-system';
 import * as Print from 'expo-print';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
-
+import { Video, ResizeMode } from 'expo-av';
+import { useVideoPlayer, VideoView } from 'expo-video';
 // --- TYPES ---
 interface PigSummary {
     pig_id: number;
@@ -48,7 +49,7 @@ interface AnalysisResult {
 }
 
 // UPDATE THIS to your computer's local IP address (e.g., 'http://192.168.1.5:5000')
-const API_BASE_URL = "http://192.168.0.100:5000"; 
+const API_BASE_URL = "http://192.168.0.161:5000"; // 192.168.0.100:5000 (Tristan IP)
 
 export default function Results() {
     // Strictly type the expected params from the previous screen
@@ -59,6 +60,10 @@ export default function Results() {
     // Type the state hooks
     const [isLoading, setIsLoading] = useState<boolean>(true);
     const [resultData, setResultData] = useState<AnalysisResult | null>(null);
+
+    const videoPlayer = useVideoPlayer(type === 'video' && uri ? uri : null, player => {
+        player.loop = false;
+    });
 
     useEffect(() => {
         if (uri && type) {
@@ -257,6 +262,12 @@ export default function Results() {
                 onLeftIconPress={() => router.back()}
             />
 
+            {/* Info note below AppBar */}
+            <View style={styles.infoNote} pointerEvents="none">
+                <Info size={14} color={Colors.light.secondary} weight="bold" />
+                <Text style={styles.infoNoteText}>Results may vary depending on the change of scenes in the video.</Text>
+            </View>
+
             <ScrollView style={styles.content} contentContainerStyle={styles.scrollContent}>
                 {/* Media Preview */}
                 <View style={styles.previewWrapper}>
@@ -277,10 +288,19 @@ export default function Results() {
                         </View>
                     ) : (
                         <View style={styles.previewWrapper}>
-                            <View style={styles.placeholderMedia}>
-                                <Text style={styles.placeholderText}>Video Preview</Text>
-                            </View>
-                            {/* NEW: Show total unique pigs for videos */}
+                            {uri ? (
+                                <VideoView
+                                    player={videoPlayer}
+                                    style={styles.mediaPreview}
+                                    allowsFullscreen
+                                    allowsPictureInPicture={false}
+                                    nativeControls
+                                />
+                            ) : (
+                                <View style={styles.placeholderMedia}>
+                                    <Text style={styles.placeholderText}>No Video Available</Text>
+                                </View>
+                            )}
                             {resultData?.total_unique_pigs !== undefined && (
                                 <View style={styles.hogsBadge}>
                                     <Text style={styles.hogsBadgeText}>
@@ -566,5 +586,20 @@ const styles = StyleSheet.create({
         color: Colors.light.white,
         fontSize: 15,
         fontFamily: 'NunitoSans-SemiBold',
+    },
+    infoNote: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'transparent',
+        paddingHorizontal: 14,
+        paddingVertical: 8,
+        gap: 6,
+    },
+    infoNoteText: {
+        color: Colors.light.secondary,
+        fontSize: 11,
+        fontFamily: 'NunitoSans-SemiBold',
+        flexShrink: 1,
+        opacity: 0.6,
     },
 });

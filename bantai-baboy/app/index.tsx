@@ -25,7 +25,7 @@ interface UploadedFile {
 }
 
 // ========== CHANGE THIS TO YOUR PC IP ADDRESS ==========
-const SERVER_URL = "http://192.168.0.100:5000";
+const SERVER_URL = "http://192.168.0.161:5000"; // 192.168.0.100:5000 (Tristan IP)
 // =======================================================
 
 export default function Index() {

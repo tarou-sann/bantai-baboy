@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, useWindowDimensions } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { router } from 'expo-router';
-import { X } from 'phosphor-react-native';
+import { X, Info } from 'phosphor-react-native';
 import { Colors } from '@/theme/colors';
 import Svg, { Rect, Text as SvgText } from 'react-native-svg';
 import * as ScreenOrientation from 'expo-screen-orientation';
@@ -26,7 +26,7 @@ interface WSResponse {
   error?: string;
 }
 
-const SERVER_URL = "192.168.0.100:5000";
+const SERVER_URL = "192.168.0.161:5000"; // 192.168.0.100:5000 (Tristan IP)
 const MAX_PIGS_PER_FRAME = 20; // raised — don't miss pigs in crowded scenes
 
 // Resize by width only — height auto-adjusts to preserve aspect ratio.
@@ -255,6 +255,12 @@ export default function LiveCameraWebSocket() {
           </View>
         )}
       </View>
+
+      {/* Info note overlay */}
+      <View style={s.infoNote} pointerEvents="none">
+        <Info size={14} color="white" weight="bold" />
+        <Text style={s.infoNoteText}>Results may vary depending on the change of scenes in the video.</Text>
+      </View>
     </View>
   );
 }
@@ -293,4 +299,24 @@ const s = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.75)', paddingHorizontal: 24, paddingVertical: 14, borderRadius: 30,
   },
   connectingText: { color: 'white', marginLeft: 12, fontSize: 16, fontWeight: 'bold' },
+  infoNote: {
+    position: 'absolute',
+    bottom: 30,
+    left: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    maxWidth: 220,
+    gap: 6,
+    zIndex: 100,
+  },
+  infoNoteText: {
+    color: 'white',
+    fontSize: 11,
+    fontWeight: '500',
+    flexShrink: 1,
+  },
 });

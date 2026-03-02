@@ -22,7 +22,7 @@ interface LiveDetectionResponse {
   total_tracked_pigs?: number;
 }
 
-const SERVER_URL = "http://192.168.0.100:5000";
+const SERVER_URL = "http://192.168.0.161:5000"; // 192.168.0.100:5000 (Tristan IP)
 
 export default function LiveCamera() {
   const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = useWindowDimensions();

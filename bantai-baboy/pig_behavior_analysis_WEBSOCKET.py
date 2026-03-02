@@ -10,6 +10,8 @@ import tensorflow as tf
 from werkzeug.utils import secure_filename
 import base64
 import json
+import tempfile
+from pathlib import Path
 
 app = Flask(__name__)
 sock = Sock(app)
@@ -348,6 +350,256 @@ def live_detect():
 def reset_tracking():
     reset_id_mapper()
     return jsonify({"status": "success", "message": "Tracking IDs reset"})
+
+@app.route('/analyze-video-with-overlay', methods=['POST'])
+def analyze_video_with_overlay():
+    file_path, error_response, status_code = handle_upload(request)
+    if error_response:
+        return error_response, status_code
+    
+    print(f"Processing Video with Overlay: {os.path.basename(file_path)}...")
+    
+    try:
+        # Create temporary output file
+        temp_output = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4', dir=UPLOAD_FOLDER)
+        output_path = temp_output.name
+        temp_output.close()
+        
+        # Process video and create annotated version
+        result, video_path = analyze_video_with_annotations(file_path, output_path)
+        
+        # Read the processed video as bytes
+        with open(video_path, 'rb') as f:
+            video_bytes = f.read()
+        
+        # Encode as base64 to send via JSON
+        video_base64 = base64.b64encode(video_bytes).decode('utf-8')
+        
+        return jsonify({
+            "status": "success",
+            "media_type": "video",
+            "primary_behavior": result["primary_behavior"],
+            "details": result["overall_behavior_counts"],
+            "total_unique_pigs": result["total_unique_pigs"],
+            "pig_summaries": result["pig_summaries"],
+            "lethargy_flags": result["lethargy_flags"],
+            "limping_flags": result["limping_flags"],
+            "time_series": result["time_series"],
+            "annotated_video": video_base64  # Base64 encoded video
+        })
+    
+    except Exception as e:
+        print(f"Video Processing Error: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        # Cleanup
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        if os.path.exists(output_path):
+            os.remove(output_path)
+
+
+def analyze_video_with_annotations(video_path, output_path):
+    """
+    Process video and return both analytics data AND annotated video
+    """
+    reset_id_mapper()
+    cap = cv2.VideoCapture(video_path)
+    
+    # Get video properties
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    
+    # Setup video writer
+    fourcc = cv2.VideoWriter_fourcc(*'H264')
+    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+    
+    INTERVAL_SECONDS = 2
+    frames_per_interval = int(fps * INTERVAL_SECONDS)
+    behavior_counts = {cls: 0 for cls in BEHAVIOR_CLASSES}
+    pig_behavior_history = defaultdict(lambda: defaultdict(int))
+    track_history = defaultdict(lambda: deque(maxlen=15))
+    idle_frames = defaultdict(int)
+    lethargic_pigs = set()
+    MOVEMENT_THRESHOLD = 10.0
+    IDLE_FRAMES_FOR_LETHARGY = int((fps / 5) * 10)
+    RESTING_BEHAVIORS = {'Lying', 'Sleeping'}
+    displacement_history = defaultdict(lambda: deque(maxlen=20))
+    limping_pigs = set()
+    LIMP_MEAN_MIN = 3.0
+    LIMP_VARIANCE_THRESHOLD = 30.0
+    time_series = []
+    interval_pig_behaviors = defaultdict(str)
+    interval_pig_ids = set()
+    interval_lethargic_ids = set()
+    interval_limping_ids = set()
+    current_interval = 0
+    frame_count = 0
+
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+        
+        frame_count += 1
+        annotated_frame = frame.copy()
+
+        if frame_count > 0 and frame_count % frames_per_interval == 0:
+            time_label = f"{current_interval * INTERVAL_SECONDS}s"
+            behavior_summary = defaultdict(list)
+            for pig_id, behavior in interval_pig_behaviors.items():
+                behavior_summary[behavior].append(pig_id)
+            time_series.append({
+                "time": time_label,
+                "pig_count": len(interval_pig_ids),
+                "behavior_breakdown": {
+                    behavior: {"count": len(pigs), "pig_ids": sorted(pigs)}
+                    for behavior, pigs in behavior_summary.items()
+                },
+                "lethargy": len(interval_lethargic_ids) > 0,
+                "lethargic_ids": sorted(list(interval_lethargic_ids)),
+                "limping": len(interval_limping_ids) > 0,
+                "limping_ids": sorted(list(interval_limping_ids)),
+            })
+            current_interval += 1
+            interval_pig_ids = set()
+            interval_pig_behaviors = defaultdict(str)
+            interval_lethargic_ids = set()
+            interval_limping_ids = set()
+
+        # Run detection every 5 frames but write ALL frames
+        if frame_count % 5 == 0:
+            results = yolo_model.track(annotated_frame, persist=True, verbose=False, conf=0.3)
+            if results[0].boxes is not None and results[0].boxes.id is not None:
+                boxes = results[0].boxes.xyxy.cpu().numpy().astype(int)
+                bytetrack_ids = results[0].boxes.id.int().cpu().tolist()
+                
+                for box, bytetrack_id in zip(boxes, bytetrack_ids):
+                    clean_id = get_clean_pig_id(bytetrack_id)
+                    x1, y1, x2, y2 = box
+                    cx = (x1 + x2) / 2.0
+                    cy = (y1 + y2) / 2.0
+                    interval_pig_ids.add(clean_id)
+                    
+                    pig_crop = frame[y1:y2, x1:x2]
+                    current_behavior = None
+                    
+                    if pig_crop.size > 0:
+                        roi = cv2.resize(pig_crop, (224, 224))
+                        roi = tf.keras.preprocessing.image.img_to_array(roi)
+                        roi = np.expand_dims(roi, axis=0)
+                        roi = roi / 255.0
+                        preds = behavior_model.predict(roi, verbose=0)
+                        top_idx = np.argmax(preds[0])
+                        current_behavior = BEHAVIOR_CLASSES[top_idx]
+                        behavior_counts[current_behavior] += 1
+                        pig_behavior_history[clean_id][current_behavior] += 1
+                        interval_pig_behaviors[clean_id] = current_behavior
+                    
+                    # Track movement for health alerts
+                    prev_pos = track_history[clean_id][-1] if track_history[clean_id] else None
+                    track_history[clean_id].append((cx, cy))
+                    
+                    if prev_pos is not None:
+                        displacement = math.sqrt((cx - prev_pos[0])**2 + (cy - prev_pos[1])**2)
+                        displacement_history[clean_id].append(displacement)
+                        is_resting = current_behavior in RESTING_BEHAVIORS
+                        
+                        if displacement < MOVEMENT_THRESHOLD and not is_resting:
+                            idle_frames[clean_id] += 1
+                        else:
+                            idle_frames[clean_id] = 0
+                        
+                        if idle_frames[clean_id] >= IDLE_FRAMES_FOR_LETHARGY:
+                            lethargic_pigs.add(clean_id)
+                            interval_lethargic_ids.add(clean_id)
+                        
+                        if current_behavior == 'Walking' and len(displacement_history[clean_id]) >= 10:
+                            displacements = list(displacement_history[clean_id])
+                            mean_disp = sum(displacements) / len(displacements)
+                            variance = sum((d - mean_disp) ** 2 for d in displacements) / len(displacements)
+                            if mean_disp > LIMP_MEAN_MIN and variance > LIMP_VARIANCE_THRESHOLD:
+                                limping_pigs.add(clean_id)
+                                interval_limping_ids.add(clean_id)
+                    
+                    # ===== DRAW ANNOTATIONS =====
+                    # Determine box color based on health status
+                    is_alert = clean_id in lethargic_pigs or clean_id in limping_pigs
+                    box_color = (0, 0, 255) if is_alert else (0, 255, 0)  # Red if alert, green otherwise
+                    
+                    # Draw bounding box
+                    cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), box_color, 2)
+                    
+                    # Prepare label text
+                    label_parts = [f"ID:{clean_id}"]
+                    if current_behavior:
+                        label_parts.append(current_behavior)
+                    if clean_id in lethargic_pigs:
+                        label_parts.append("LETHARGIC")
+                    if clean_id in limping_pigs:
+                        label_parts.append("LIMPING")
+                    
+                    label = " | ".join(label_parts)
+                    
+                    # Draw label background
+                    (text_width, text_height), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+                    cv2.rectangle(annotated_frame, (x1, y1 - text_height - 10), (x1 + text_width, y1), box_color, -1)
+                    
+                    # Draw label text
+                    cv2.putText(annotated_frame, label, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        
+        # Write the annotated frame
+        out.write(annotated_frame)
+
+    # Final interval
+    if interval_pig_ids:
+        time_label = f"{current_interval * INTERVAL_SECONDS}s"
+        behavior_summary = defaultdict(list)
+        for pig_id, behavior in interval_pig_behaviors.items():
+            behavior_summary[behavior].append(pig_id)
+        time_series.append({
+            "time": time_label,
+            "pig_count": len(interval_pig_ids),
+            "behavior_breakdown": {
+                behavior: {"count": len(pigs), "pig_ids": sorted(pigs)}
+                for behavior, pigs in behavior_summary.items()
+            },
+            "lethargy": len(interval_lethargic_ids) > 0,
+            "lethargic_ids": sorted(list(interval_lethargic_ids)),
+            "limping": len(interval_limping_ids) > 0,
+            "limping_ids": sorted(list(interval_limping_ids)),
+        })
+
+    cap.release()
+    out.release()
+    
+    # Prepare summary data
+    pig_summaries = []
+    for pig_id, behaviors in pig_behavior_history.items():
+        predominant_behavior = max(behaviors, key=behaviors.get)
+        pig_summaries.append({
+            "pig_id": pig_id,
+            "predominant_behavior": predominant_behavior,
+            "behavior_counts": dict(behaviors),
+            "is_lethargic": pig_id in lethargic_pigs,
+            "is_limping": pig_id in limping_pigs
+        })
+    pig_summaries.sort(key=lambda x: x["pig_id"])
+    
+    most_common = max(behavior_counts, key=behavior_counts.get) if sum(behavior_counts.values()) > 0 else "No Pig Detected"
+    
+    result = {
+        "primary_behavior": most_common,
+        "overall_behavior_counts": behavior_counts,
+        "total_unique_pigs": len(pig_behavior_history),
+        "pig_summaries": pig_summaries,
+        "lethargy_flags": len(lethargic_pigs),
+        "limping_flags": len(limping_pigs),
+        "time_series": time_series
+    }
+    
+    return result, output_path
 
 
 @sock.route('/ws/live-stream')

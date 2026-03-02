@@ -25,7 +25,7 @@ interface UploadedFile {
 }
 
 // ========== CHANGE THIS TO YOUR PC IP ADDRESS ==========
-const SERVER_URL = "http://192.168.0.161:5000"; // 192.168.0.100:5000 (Tristan IP)
+const SERVER_URL = "http://192.168.0.101:5000"; // 192.168.0.100:5000 (Tristan IP)
 // =======================================================
 
 export default function Index() {
@@ -58,7 +58,7 @@ export default function Index() {
           text: 'Photo',
           onPress: async () => {
             const result = await ImagePicker.launchCameraAsync({
-              mediaTypes: ['images'],
+              mediaTypes: ImagePicker.MediaTypeOptions.Images,
               allowsEditing: true,
               quality: 1,
             });
@@ -86,21 +86,21 @@ export default function Index() {
           text: 'Video',
           onPress: async () => {
             const result = await ImagePicker.launchCameraAsync({
-              mediaTypes: ['videos'],
+              mediaTypes: ImagePicker.MediaTypeOptions.Videos,
               allowsEditing: true,
               quality: 1,
             });
 
             if (!result.canceled && result.assets[0]) {
               const asset = result.assets[0];
-              const analysisResult = await uploadToServer(asset, 'video');
+              const analysisResult = await uploadVideoForProcessing(asset);
 
               if (analysisResult) {
                 const fileName = asset.uri.split('/').pop() || 'video.mp4';
                 const newFile: UploadedFile = {
                   id: Date.now().toString(),
                   filename: fileName,
-                  uri: asset.uri,
+                  uri: asset.uri, // Keep original URI for thumbnail
                   type: 'video',
                   uploadTime: 'Analyzed just now',
                 };
@@ -139,7 +139,6 @@ export default function Index() {
       console.log(`Uploading to: ${SERVER_URL}${endpoint}`);
 
       const controller = new AbortController();
-      // 3 minute timeout for videos, 30s for images
       const timeoutMs = mediaType === "video" ? 180000 : 30000;
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -154,7 +153,6 @@ export default function Index() {
 
       clearTimeout(timeoutId);
 
-      // Check content type before parsing — avoids the HTML parse error
       const contentType = response.headers.get("content-type");
       if (!contentType || !contentType.includes("application/json")) {
         const text = await response.text();
@@ -197,19 +195,79 @@ export default function Index() {
     }
   };
 
+  const uploadVideoForProcessing = async (
+    asset: ImagePicker.ImagePickerAsset
+  ) => {
+    setIsUploading(true);
+
+    const formData = new FormData();
+    formData.append("file", {
+      uri: asset.uri,
+      name: asset.fileName || "video.mp4",
+      type: asset.mimeType || "video/mp4",
+    } as any);
+
+    try {
+      console.log(`Uploading to: ${SERVER_URL}/analyze-video-with-overlay`);
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 180000);
+
+      const response = await fetch(`${SERVER_URL}/analyze-video-with-overlay`, {
+        method: "POST",
+        body: formData,
+        headers: {
+          "Content-Type": "multipart/form-data",
+        },
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      const contentType = response.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        const text = await response.text();
+        console.error("Non-JSON response:", text);
+        Alert.alert("Server Error", "Server returned an unexpected response.");
+        return null;
+      }
+
+      const result = await response.json();
+
+      if (response.ok) {
+        Alert.alert("Processing Complete", `Detected: ${result.primary_behavior}`);
+        
+        // Return result with annotated_video base64 included
+        return result;
+      } else {
+        Alert.alert("Server Error", result.error || "Unknown error occurred");
+        return null;
+      }
+    } catch (error: any) {
+      console.error(error);
+      if (error.name === "AbortError") {
+        Alert.alert("Timeout", "Processing took too long.");
+      } else {
+        Alert.alert("Connection Error", "Could not connect to server.");
+      }
+      return null;
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
   const handleImageUpload = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== "granted") return Alert.alert("Permission needed");
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ["images"],
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
       quality: 1,
     });
 
     if (!result.canceled && result.assets[0]) {
       const asset = result.assets[0];
-
       const analysisResult = await uploadToServer(asset, "image");
 
       if (analysisResult) {
@@ -232,22 +290,21 @@ export default function Index() {
     if (status !== "granted") return Alert.alert("Permission needed");
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ["videos"],
+      mediaTypes: ImagePicker.MediaTypeOptions.Videos,
       allowsEditing: true,
       quality: 1,
     });
 
     if (!result.canceled && result.assets[0]) {
       const asset = result.assets[0];
-
-      const analysisResult = await uploadToServer(asset, "video");
+      const analysisResult = await uploadVideoForProcessing(asset);
 
       if (analysisResult) {
         const fileName = asset.uri.split("/").pop() || "video.mp4";
         const newFile: UploadedFile = {
           id: Date.now().toString(),
           filename: fileName,
-          uri: asset.uri,
+          uri: asset.uri, // Keep original URI for thumbnail
           type: "video",
           uploadTime: "Analyzed just now",
         };
@@ -269,7 +326,6 @@ export default function Index() {
           </Text>
         </View>
 
-        {/* NEW: Live Camera Button */}
         <TouchableOpacity
           style={styles.liveCameraButton}
           onPress={() => router.push('/live-camera-WEBSOCKET' as any)}

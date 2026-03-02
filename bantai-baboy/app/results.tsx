@@ -5,12 +5,11 @@ import { DropdownItem } from '@/components/dropdown-item';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ArrowLeft, Info } from 'phosphor-react-native';
 import { Colors } from '@/theme/colors';
-// import * as FileSystem from 'expo-file-system';
 import * as Print from 'expo-print';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
-import { Video, ResizeMode } from 'expo-av';
 import { useVideoPlayer, VideoView } from 'expo-video';
+
 // --- TYPES ---
 interface PigSummary {
     pig_id: number;
@@ -39,29 +38,32 @@ interface AnalysisResult {
     status: string;
     media_type: 'image' | 'video';
     primary_behavior: string;
-    detected_pigs_count?: number; // Present in image results
-    total_unique_pigs?: number; // Present in video results
-    pig_summaries?: PigSummary[]; // Present in video results
+    detected_pigs_count?: number;
+    total_unique_pigs?: number;
+    pig_summaries?: PigSummary[];
     details: Record<string, number>;
     lethargy_flags?: number;
     limping_flags?: number;
-    time_series?: TimeSeriesEntry[]; // Present in video results
+    time_series?: TimeSeriesEntry[];
+    annotated_video?: string; // base64 video
 }
 
-// UPDATE THIS to your computer's local IP address (e.g., 'http://192.168.1.5:5000')
-const API_BASE_URL = "http://192.168.0.161:5000"; // 192.168.0.100:5000 (Tristan IP)
+const API_BASE_URL = "http://192.168.0.101:5000";
 
 export default function Results() {
-    // Strictly type the expected params from the previous screen
     const params = useLocalSearchParams<{ filename?: string; uri?: string; type?: 'image' | 'video' }>();
     const router = useRouter();
     const { filename, uri, type } = params;
 
-    // Type the state hooks
     const [isLoading, setIsLoading] = useState<boolean>(true);
     const [resultData, setResultData] = useState<AnalysisResult | null>(null);
+    const [isSavingPdf, setIsSavingPdf] = useState(false);
+    const [isSavingVideo, setIsSavingVideo] = useState(false);
+    const [annotatedVideoUri, setAnnotatedVideoUri] = useState<string | null>(null);
 
-    const videoPlayer = useVideoPlayer(type === 'video' && uri ? uri : null, player => {
+    // Use annotated video if available, otherwise use original
+    const videoUri = type === 'video' ? (annotatedVideoUri || uri || '') : '';
+    const videoPlayer = useVideoPlayer(videoUri || 'data:video/mp4;base64,', player => {
         player.loop = false;
     });
 
@@ -86,10 +88,12 @@ export default function Results() {
                 type: type === 'image' ? 'image/jpeg' : 'video/mp4',
             } as any); 
 
-            const endpoint = type === 'image' ? '/analyze-image' : '/analyze-video';
+            const endpoint = type === 'image' 
+                ? '/analyze-image' 
+                : '/analyze-video-with-overlay';
 
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 120000);
+            const timeoutId = setTimeout(() => controller.abort(), 180000);
 
             const response = await fetch(`${API_BASE_URL}${endpoint}`, {
                 method: 'POST',
@@ -106,6 +110,22 @@ export default function Results() {
 
             if (response.ok) {
                 setResultData(data as AnalysisResult);
+                
+                // If video analysis returned annotated video, save it as a local file
+                if (data.annotated_video && type === 'video') {
+                    try {
+                        const tempFileName = `temp_annotated_${Date.now()}.mp4`;
+                        const tempFile = new File(Paths.cache, tempFileName);
+                        
+                        await tempFile.write(data.annotated_video, { encoding: 'base64' });
+                        
+                        setAnnotatedVideoUri(tempFile.uri);
+                        console.log('✅ Annotated video saved to:', tempFile.uri);
+                    } catch (err) {
+                        console.error('Failed to save annotated video locally:', err);
+                        Alert.alert('Warning', 'Could not load annotated video for playback, but analysis completed.');
+                    }
+                }
             } else {
                 Alert.alert("Analysis Error", data.error || "Something went wrong");
             }
@@ -119,125 +139,126 @@ export default function Results() {
 
     const saveResultsAsPdf = async () => {
         if (!resultData) return Alert.alert('No results', 'There are no results to save.');
+        if (isSavingPdf) return;
 
-        const rows = Object.entries(resultData.details || {}).map(
-            ([k, v]) => `<tr><td style="padding:6px 8px;border:1px solid #eee">${k}</td><td style="padding:6px 8px;border:1px solid #eee;text-align:right">${v}</td></tr>`
-        ).join('');
-
-        // NEW: Add pig summaries table
-        let pigSummariesHtml = '';
-        if (resultData.pig_summaries && resultData.pig_summaries.length > 0) {
-            const pigRows = resultData.pig_summaries.map((pig) => {
-                const behaviorsList = Object.entries(pig.behavior_counts)
-                    .map(([b, c]) => `${b}: ${c}`)
-                    .join(', ');
-                const alerts = [];
-                if (pig.is_lethargic) alerts.push('Lethargic');
-                if (pig.is_limping) alerts.push('Limping');
-                const alertText = alerts.length > 0 ? alerts.join(', ') : 'None';
-                
-                return `<tr>
-                    <td style="padding:6px 8px;border:1px solid #eee">Pig #${pig.pig_id}</td>
-                    <td style="padding:6px 8px;border:1px solid #eee">${pig.predominant_behavior}</td>
-                    <td style="padding:6px 8px;border:1px solid #eee;font-size:11px">${behaviorsList}</td>
-                    <td style="padding:6px 8px;border:1px solid #eee;text-align:center">${alertText}</td>
-                </tr>`;
-            }).join('');
-
-            pigSummariesHtml = `
-                <h3>Individual Pig Summary</h3>
-                <table style="border-collapse:collapse;width:100%;margin-top:8px"> 
-                    <thead>
-                        <tr>
-                            <th style="text-align:left;padding:6px 8px;border:1px solid #eee">Pig ID</th>
-                            <th style="text-align:left;padding:6px 8px;border:1px solid #eee">Predominant</th>
-                            <th style="text-align:left;padding:6px 8px;border:1px solid #eee">All Behaviors</th>
-                            <th style="text-align:center;padding:6px 8px;border:1px solid #eee">Alerts</th>
-                        </tr>
-                    </thead>
-                    <tbody>${pigRows}</tbody>
-                </table>
-            `;
-        }
-
-        let timeSeriesHtml = '';
-        if (resultData.time_series && resultData.time_series.length > 0) {
-            const tsRows = resultData.time_series.map((d: TimeSeriesEntry) => {
-                const leth = d.lethargy ? 'Yes' : 'No';
-                const limp = d.limping ? 'Yes' : 'No';
-                const count = d.pig_count ?? 0;
-                
-                // NEW: Show behavior breakdown in time series
-                let behaviorBreakdownText = '';
-                if (d.behavior_breakdown) {
-                    behaviorBreakdownText = Object.entries(d.behavior_breakdown)
-                        .map(([behavior, data]) => `${behavior}: ${data.count}`)
-                        .join(', ');
-                }
-                
-                return `<tr>
-                    <td style="padding:6px 8px;border:1px solid #eee">${d.time}</td>
-                    <td style="padding:6px 8px;border:1px solid #eee;text-align:right">${count}</td>
-                    <td style="padding:6px 8px;border:1px solid #eee;font-size:11px">${behaviorBreakdownText}</td>
-                    <td style="padding:6px 8px;border:1px solid #eee;text-align:center">${leth}</td>
-                    <td style="padding:6px 8px;border:1px solid #eee;text-align:center">${limp}</td>
-                </tr>`;
-            }).join('');
-
-            timeSeriesHtml = `
-                <h3>Time Series</h3>
-                <table style="border-collapse:collapse;width:100%;margin-top:8px"> 
-                    <thead>
-                        <tr>
-                            <th style="text-align:left;padding:6px 8px;border:1px solid #eee">Time</th>
-                            <th style="text-align:right;padding:6px 8px;border:1px solid #eee">Pig Count</th>
-                            <th style="text-align:left;padding:6px 8px;border:1px solid #eee">Behaviors</th>
-                            <th style="text-align:center;padding:6px 8px;border:1px solid #eee">Lethargy</th>
-                            <th style="text-align:center;padding:6px 8px;border:1px solid #eee">Limping</th>
-                        </tr>
-                    </thead>
-                    <tbody>${tsRows}</tbody>
-                </table>
-            `;
-        }
-
-        const html = `
-            <html>
-                <head>
-                    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-                    <style>
-                        body{font-family: Arial, Helvetica, sans-serif;padding:20px;color:#222}
-                        h1{color:#743535}
-                        table{border-collapse:collapse;width:100%;margin-top:12px}
-                        th{background:#f7f7f7}
-                    </style>
-                </head>
-                <body>
-                    <h1>Bantai Baboy — Analysis Report</h1>
-                    <p><strong>File:</strong> ${filename ?? 'N/A'}</p>
-                    <p><strong>Generated:</strong> ${new Date().toLocaleString()}</p>
-                    <h3>Summary</h3>
-                    <p>Primary Behavior: <strong>${resultData.primary_behavior}</strong></p>
-                    <p>Detected Hogs: <strong>${resultData.detected_pigs_count ?? resultData.total_unique_pigs ?? 'N/A'}</strong></p>
-                    <p>Lethargy Alerts: <strong>${resultData.lethargy_flags ?? 0}</strong></p>
-                    <p>Limping Alerts: <strong>${resultData.limping_flags ?? 0}</strong></p>
-
-                    <h3>Behavior Breakdown</h3>
-                    <table>
-                        <thead>
-                            <tr><th style="text-align:left;padding:6px 8px;border:1px solid #eee">Behavior</th><th style="text-align:right;padding:6px 8px;border:1px solid #eee">Count</th></tr>
-                        </thead>
-                        <tbody>${rows}</tbody>
-                    </table>
-
-                    ${pigSummariesHtml}
-                    ${timeSeriesHtml}
-
-                </body>
-            </html>
-        `;
+        setIsSavingPdf(true);
 
         try {
+            const rows = Object.entries(resultData.details || {}).map(
+                ([k, v]) => `<tr><td style="padding:6px 8px;border:1px solid #eee">${k}</td><td style="padding:6px 8px;border:1px solid #eee;text-align:right">${v}</td></tr>`
+            ).join('');
+
+            let pigSummariesHtml = '';
+            if (resultData.pig_summaries && resultData.pig_summaries.length > 0) {
+                const pigRows = resultData.pig_summaries.map((pig) => {
+                    const behaviorsList = Object.entries(pig.behavior_counts)
+                        .map(([b, c]) => `${b}: ${c}`)
+                        .join(', ');
+                    const alerts = [];
+                    if (pig.is_lethargic) alerts.push('Lethargic');
+                    if (pig.is_limping) alerts.push('Limping');
+                    const alertText = alerts.length > 0 ? alerts.join(', ') : 'None';
+                    
+                    return `<tr>
+                        <td style="padding:6px 8px;border:1px solid #eee">Pig #${pig.pig_id}</td>
+                        <td style="padding:6px 8px;border:1px solid #eee">${pig.predominant_behavior}</td>
+                        <td style="padding:6px 8px;border:1px solid #eee;font-size:11px">${behaviorsList}</td>
+                        <td style="padding:6px 8px;border:1px solid #eee;text-align:center">${alertText}</td>
+                    </tr>`;
+                }).join('');
+
+                pigSummariesHtml = `
+                    <h3>Individual Pig Summary</h3>
+                    <table style="border-collapse:collapse;width:100%;margin-top:8px"> 
+                        <thead>
+                            <tr>
+                                <th style="text-align:left;padding:6px 8px;border:1px solid #eee">Pig ID</th>
+                                <th style="text-align:left;padding:6px 8px;border:1px solid #eee">Predominant</th>
+                                <th style="text-align:left;padding:6px 8px;border:1px solid #eee">All Behaviors</th>
+                                <th style="text-align:center;padding:6px 8px;border:1px solid #eee">Alerts</th>
+                            </tr>
+                        </thead>
+                        <tbody>${pigRows}</tbody>
+                    </table>
+                `;
+            }
+
+            let timeSeriesHtml = '';
+            if (resultData.time_series && resultData.time_series.length > 0) {
+                const tsRows = resultData.time_series.map((d: TimeSeriesEntry) => {
+                    const leth = d.lethargy ? 'Yes' : 'No';
+                    const limp = d.limping ? 'Yes' : 'No';
+                    const count = d.pig_count ?? 0;
+                    
+                    let behaviorBreakdownText = '';
+                    if (d.behavior_breakdown) {
+                        behaviorBreakdownText = Object.entries(d.behavior_breakdown)
+                            .map(([behavior, data]) => `${behavior}: ${data.count}`)
+                            .join(', ');
+                    }
+                    
+                    return `<tr>
+                        <td style="padding:6px 8px;border:1px solid #eee">${d.time}</td>
+                        <td style="padding:6px 8px;border:1px solid #eee;text-align:right">${count}</td>
+                        <td style="padding:6px 8px;border:1px solid #eee;font-size:11px">${behaviorBreakdownText}</td>
+                        <td style="padding:6px 8px;border:1px solid #eee;text-align:center">${leth}</td>
+                        <td style="padding:6px 8px;border:1px solid #eee;text-align:center">${limp}</td>
+                    </tr>`;
+                }).join('');
+
+                timeSeriesHtml = `
+                    <h3>Time Series</h3>
+                    <table style="border-collapse:collapse;width:100%;margin-top:8px"> 
+                        <thead>
+                            <tr>
+                                <th style="text-align:left;padding:6px 8px;border:1px solid #eee">Time</th>
+                                <th style="text-align:right;padding:6px 8px;border:1px solid #eee">Pig Count</th>
+                                <th style="text-align:left;padding:6px 8px;border:1px solid #eee">Behaviors</th>
+                                <th style="text-align:center;padding:6px 8px;border:1px solid #eee">Lethargy</th>
+                                <th style="text-align:center;padding:6px 8px;border:1px solid #eee">Limping</th>
+                            </tr>
+                        </thead>
+                        <tbody>${tsRows}</tbody>
+                    </table>
+                `;
+            }
+
+            const html = `
+                <html>
+                    <head>
+                        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+                        <style>
+                            body{font-family: Arial, Helvetica, sans-serif;padding:20px;color:#222}
+                            h1{color:#743535}
+                            table{border-collapse:collapse;width:100%;margin-top:12px}
+                            th{background:#f7f7f7}
+                        </style>
+                    </head>
+                    <body>
+                        <h1>Bantai Baboy — Analysis Report</h1>
+                        <p><strong>File:</strong> ${filename ?? 'N/A'}</p>
+                        <p><strong>Generated:</strong> ${new Date().toLocaleString()}</p>
+                        <h3>Summary</h3>
+                        <p>Primary Behavior: <strong>${resultData.primary_behavior}</strong></p>
+                        <p>Detected Hogs: <strong>${resultData.detected_pigs_count ?? resultData.total_unique_pigs ?? 'N/A'}</strong></p>
+                        <p>Lethargy Alerts: <strong>${resultData.lethargy_flags ?? 0}</strong></p>
+                        <p>Limping Alerts: <strong>${resultData.limping_flags ?? 0}</strong></p>
+
+                        <h3>Behavior Breakdown</h3>
+                        <table>
+                            <thead>
+                                <tr><th style="text-align:left;padding:6px 8px;border:1px solid #eee">Behavior</th><th style="text-align:right;padding:6px 8px;border:1px solid #eee">Count</th></tr>
+                            </thead>
+                            <tbody>${rows}</tbody>
+                        </table>
+
+                        ${pigSummariesHtml}
+                        ${timeSeriesHtml}
+
+                    </body>
+                </html>
+            `;
+
             const { uri } = await Print.printToFileAsync({ html });
 
             const fileName = `bantai-report-${Date.now()}.pdf`;
@@ -251,6 +272,34 @@ export default function Results() {
         } catch (err) {
             console.error('PDF error', err);
             Alert.alert('Export failed', 'Unable to create or share PDF.');
+        } finally {
+            setIsSavingPdf(false);
+        }
+    };
+
+    const saveAnnotatedVideo = async () => {
+        if (!annotatedVideoUri) {
+            return Alert.alert('No video', 'No annotated video available to save.');
+        }
+        if (isSavingVideo) return;
+
+        setIsSavingVideo(true);
+
+        try {
+            const fileName = `annotated-${Date.now()}.mp4`;
+            const destFile = new File(Paths.document, fileName);
+            
+            const sourceFile = new File(annotatedVideoUri);
+            await sourceFile.copy(destFile);
+            
+            await Sharing.shareAsync(destFile.uri);
+            
+            Alert.alert('Success', 'Annotated video saved and ready to share!');
+        } catch (err) {
+            console.error('Video save error', err);
+            Alert.alert('Save failed', 'Unable to save annotated video.');
+        } finally {
+            setIsSavingVideo(false);
         }
     };
 
@@ -262,14 +311,12 @@ export default function Results() {
                 onLeftIconPress={() => router.back()}
             />
 
-            {/* Info note below AppBar */}
             <View style={styles.infoNote} pointerEvents="none">
                 <Info size={14} color={Colors.light.secondary} weight="bold" />
                 <Text style={styles.infoNoteText}>Results may vary depending on the change of scenes in the video.</Text>
             </View>
 
             <ScrollView style={styles.content} contentContainerStyle={styles.scrollContent}>
-                {/* Media Preview */}
                 <View style={styles.previewWrapper}>
                     {type === 'image' && uri ? (
                         <View style={styles.previewWrapper}>
@@ -288,7 +335,7 @@ export default function Results() {
                         </View>
                     ) : (
                         <View style={styles.previewWrapper}>
-                            {uri ? (
+                            {videoUri ? (
                                 <VideoView
                                     player={videoPlayer}
                                     style={styles.mediaPreview}
@@ -324,7 +371,6 @@ export default function Results() {
                                 Primary Behavior: {resultData.primary_behavior}
                             </Text>
 
-                            {/* NEW: Show individual pig summaries */}
                             {resultData.pig_summaries && resultData.pig_summaries.length > 0 && (
                                 <View style={{ marginTop: 12, marginBottom: 8 }}>
                                     <Text style={[styles.placeholderContent, { fontWeight: 'bold', marginBottom: 8 }]}>
@@ -376,7 +422,6 @@ export default function Results() {
                                         Lethargy Alerts: {resultData.lethargy_flags} {resultData.lethargy_flags > 0 ? '⚠️' : '✅'}
                                     </Text>
 
-                                    {/* Show exactly when lethargy was triggered */}
                                     {resultData.time_series && resultData.time_series.filter(d => d.lethargy).length > 0 && (
                                         <View style={{ marginTop: 6 }}>
                                             <Text style={[styles.placeholderContent, { color: '#D32F2F' }]}>
@@ -467,15 +512,32 @@ export default function Results() {
                     <Text style={styles.errorText}>No results available.</Text>
                 )}
             </ScrollView>
+            
             {resultData && (
                 <View style={styles.bottomContainer}>
                     <TouchableOpacity
-                        style={styles.saveButton}
+                        style={[styles.saveButton, isSavingPdf && styles.saveButtonDisabled]}
                         activeOpacity={0.8}
                         onPress={saveResultsAsPdf}
+                        disabled={isSavingPdf}
                     >
-                        <Text style={styles.saveButtonText}>Save Results</Text>
+                        <Text style={styles.saveButtonText}>
+                            {isSavingPdf ? 'Saving PDF...' : 'Save PDF Report'}
+                        </Text>
                     </TouchableOpacity>
+                    
+                    {annotatedVideoUri && type === 'video' && (
+                        <TouchableOpacity
+                            style={[styles.saveButton, styles.saveVideoButton, isSavingVideo && styles.saveButtonDisabled]}
+                            activeOpacity={0.8}
+                            onPress={saveAnnotatedVideo}
+                            disabled={isSavingVideo}
+                        >
+                            <Text style={styles.saveButtonText}>
+                                {isSavingVideo ? 'Saving Video...' : 'Save Annotated Video'}
+                            </Text>
+                        </TouchableOpacity>
+                    )}
                 </View>
             )}
         </View>
@@ -574,6 +636,7 @@ const styles = StyleSheet.create({
         paddingHorizontal: 100,
         paddingVertical: 16,
         backgroundColor: Colors.light.background,
+        gap: 12,
     },
     saveButton: {
         backgroundColor: Colors.light.results,
@@ -581,6 +644,12 @@ const styles = StyleSheet.create({
         borderRadius: 9,
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    saveVideoButton: {
+        backgroundColor: Colors.light.primary,
+    },
+    saveButtonDisabled: {
+        opacity: 0.6,
     },
     saveButtonText: {
         color: Colors.light.white,

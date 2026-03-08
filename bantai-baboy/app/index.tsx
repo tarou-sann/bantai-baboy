@@ -3,8 +3,8 @@ import { DropdownItem } from "@/components/dropdown-item";
 import { FloatingActionButton } from "@/components/floating-action-button";
 import { Colors } from "@/theme/colors";
 import * as ImagePicker from "expo-image-picker";
-import { router } from "expo-router";
-import { useState } from "react";
+import { router, useFocusEffect } from "expo-router";
+import { useState, useEffect, useCallback } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -15,6 +15,9 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import AsyncStorage from '@react-native-async-storage/async-storage';
+// import { useFocusEffect } from 'expo-router';
+// import { useCallback } from 'react';
 
 interface UploadedFile {
   id: string;
@@ -22,15 +25,64 @@ interface UploadedFile {
   uri: string;
   type: "image" | "video";
   uploadTime: string;
+  analysisData?: any;
 }
 
-// ========== CHANGE THIS TO YOUR PC IP ADDRESS ==========
-const SERVER_URL = "http://192.168.0.101:5000"; // 192.168.0.100:5000 (Tristan IP)
-// =======================================================
+const SERVER_URL_KEY = '@server_url';
+const DEFAULT_SERVER_URL = 'http://192.168.0.101:5000';
+const STORAGE_KEY = '@bantai_baboy_files';
 
 export default function Index() {
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+  const [serverUrl, setServerUrl] = useState(DEFAULT_SERVER_URL);
+
+  // useEffect(() => {
+  //   loadSavedFiles();
+  //   loadServerUrl();
+  // }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadServerUrl();
+    }, [])
+  );
+
+  useEffect(() => {
+    saveFiles();
+  }, [files]);
+
+  const loadServerUrl = async () => {
+    try {
+      const saved = await AsyncStorage.getItem(SERVER_URL_KEY);
+      if (saved) {
+        setServerUrl(saved);
+        console.log('✅ Using server URL:', saved);
+      }
+    } catch (error) {
+      console.error('Failed to load server URL:', error);
+    }
+  };
+
+  const loadSavedFiles = async () => {
+    try {
+      const savedFiles = await AsyncStorage.getItem(STORAGE_KEY);
+      if (savedFiles) {
+        setFiles(JSON.parse(savedFiles));
+        console.log('✅ Loaded', JSON.parse(savedFiles).length, 'saved analyses');
+      }
+    } catch (error) {
+      console.error('Failed to load saved files:', error);
+    }
+  };
+
+  const saveFiles = async () => {
+    try {
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(files));
+    } catch (error) {
+      console.error('Failed to save files:', error);
+    }
+  };
 
   const navigateToResults = (file: UploadedFile, analysisResult?: any) => {
     router.push({
@@ -41,7 +93,7 @@ export default function Index() {
         type: file.type,
         analysisData: analysisResult
           ? JSON.stringify(analysisResult)
-          : undefined,
+          : (file.analysisData ? JSON.stringify(file.analysisData) : undefined),
       },
     });
   };
@@ -74,7 +126,8 @@ export default function Index() {
                   filename: fileName,
                   uri: asset.uri,
                   type: 'image',
-                  uploadTime: 'Analyzed just now',
+                  uploadTime: new Date().toLocaleString(),
+                  analysisData: analysisResult,
                 };
                 setFiles([newFile, ...files]);
                 navigateToResults(newFile, analysisResult);
@@ -100,9 +153,10 @@ export default function Index() {
                 const newFile: UploadedFile = {
                   id: Date.now().toString(),
                   filename: fileName,
-                  uri: asset.uri, // Keep original URI for thumbnail
+                  uri: asset.uri,
                   type: 'video',
-                  uploadTime: 'Analyzed just now',
+                  uploadTime: new Date().toLocaleString(),
+                  analysisData: analysisResult,
                 };
                 setFiles([newFile, ...files]);
                 navigateToResults(newFile, analysisResult);
@@ -121,33 +175,23 @@ export default function Index() {
   ) => {
     setIsUploading(true);
 
-    const endpoint =
-      mediaType === "image" ? "/analyze-image" : "/analyze-video";
-
+    const endpoint = mediaType === "image" ? "/analyze-image" : "/analyze-video";
     const formData = new FormData();
     formData.append("file", {
       uri: asset.uri,
-      name:
-        asset.fileName ||
-        (mediaType === "image" ? "image.jpg" : "video.mp4"),
-      type:
-        asset.mimeType ||
-        (mediaType === "image" ? "image/jpeg" : "video/mp4"),
+      name: asset.fileName || (mediaType === "image" ? "image.jpg" : "video.mp4"),
+      type: asset.mimeType || (mediaType === "image" ? "image/jpeg" : "video/mp4"),
     } as any);
 
     try {
-      console.log(`Uploading to: ${SERVER_URL}${endpoint}`);
-
       const controller = new AbortController();
       const timeoutMs = mediaType === "video" ? 180000 : 30000;
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-      const response = await fetch(`${SERVER_URL}${endpoint}`, {
+      const response = await fetch(`${serverUrl}${endpoint}`, {
         method: "POST",
         body: formData,
-        headers: {
-          "Content-Type": "multipart/form-data",
-        },
+        headers: { "Content-Type": "multipart/form-data" },
         signal: controller.signal,
       });
 
@@ -155,39 +199,24 @@ export default function Index() {
 
       const contentType = response.headers.get("content-type");
       if (!contentType || !contentType.includes("application/json")) {
-        const text = await response.text();
-        console.error("Non-JSON response:", text);
-        Alert.alert(
-          "Server Error",
-          "Server returned an unexpected response. Check that Flask is running and the endpoint is correct."
-        );
+        Alert.alert("Server Error", "Server returned an unexpected response.");
         return null;
       }
 
       const result = await response.json();
 
       if (response.ok) {
-        Alert.alert(
-          "Analysis Complete",
-          `Detected: ${result.primary_behavior}`
-        );
+        Alert.alert("Analysis Complete", `Detected: ${result.primary_behavior}`);
         return result;
       } else {
         Alert.alert("Server Error", result.error || "Unknown error occurred");
         return null;
       }
     } catch (error: any) {
-      console.error(error);
       if (error.name === "AbortError") {
-        Alert.alert(
-          "Timeout",
-          "Analysis took too long. Try a shorter video or check your connection."
-        );
+        Alert.alert("Timeout", "Analysis took too long.");
       } else {
-        Alert.alert(
-          "Connection Error",
-          "Could not connect to Python server. Check your IP address and ensure Flask is running."
-        );
+        Alert.alert("Connection Error", "Could not connect to server.");
       }
       return null;
     } finally {
@@ -195,9 +224,7 @@ export default function Index() {
     }
   };
 
-  const uploadVideoForProcessing = async (
-    asset: ImagePicker.ImagePickerAsset
-  ) => {
+  const uploadVideoForProcessing = async (asset: ImagePicker.ImagePickerAsset) => {
     setIsUploading(true);
 
     const formData = new FormData();
@@ -208,17 +235,13 @@ export default function Index() {
     } as any);
 
     try {
-      console.log(`Uploading to: ${SERVER_URL}/analyze-video-with-overlay`);
-
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 180000);
 
-      const response = await fetch(`${SERVER_URL}/analyze-video-with-overlay`, {
+      const response = await fetch(`${serverUrl}/analyze-video-with-overlay`, {
         method: "POST",
         body: formData,
-        headers: {
-          "Content-Type": "multipart/form-data",
-        },
+        headers: { "Content-Type": "multipart/form-data" },
         signal: controller.signal,
       });
 
@@ -226,8 +249,6 @@ export default function Index() {
 
       const contentType = response.headers.get("content-type");
       if (!contentType || !contentType.includes("application/json")) {
-        const text = await response.text();
-        console.error("Non-JSON response:", text);
         Alert.alert("Server Error", "Server returned an unexpected response.");
         return null;
       }
@@ -236,15 +257,12 @@ export default function Index() {
 
       if (response.ok) {
         Alert.alert("Processing Complete", `Detected: ${result.primary_behavior}`);
-        
-        // Return result with annotated_video base64 included
         return result;
       } else {
         Alert.alert("Server Error", result.error || "Unknown error occurred");
         return null;
       }
     } catch (error: any) {
-      console.error(error);
       if (error.name === "AbortError") {
         Alert.alert("Timeout", "Processing took too long.");
       } else {
@@ -277,7 +295,8 @@ export default function Index() {
           filename: fileName,
           uri: asset.uri,
           type: "image",
-          uploadTime: "Analyzed just now",
+          uploadTime: new Date().toLocaleString(),
+          analysisData: analysisResult,
         };
         setFiles([newFile, ...files]);
         navigateToResults(newFile, analysisResult);
@@ -304,9 +323,10 @@ export default function Index() {
         const newFile: UploadedFile = {
           id: Date.now().toString(),
           filename: fileName,
-          uri: asset.uri, // Keep original URI for thumbnail
+          uri: asset.uri,
           type: "video",
-          uploadTime: "Analyzed just now",
+          uploadTime: new Date().toLocaleString(),
+          analysisData: analysisResult,
         };
         setFiles([newFile, ...files]);
         navigateToResults(newFile, analysisResult);
@@ -314,16 +334,42 @@ export default function Index() {
     }
   };
 
+  const clearAllHistory = () => {
+    Alert.alert(
+      'Clear History',
+      'Are you sure you want to delete all saved analyses?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clear',
+          style: 'destructive',
+          onPress: async () => {
+            setFiles([]);
+            await AsyncStorage.removeItem(STORAGE_KEY);
+            Alert.alert('Success', 'All history cleared');
+          },
+        },
+      ]
+    );
+  };
+
   return (
     <View style={styles.container}>
-      <AppBar />
+      <AppBar 
+        subtitle={`Connected to: ${serverUrl}`}
+        rightIcon={<Text style={{ fontSize: 24 }}>⚙️</Text>}
+        onRightIconPress={() => router.push('/settings')} 
+      />
       <ScrollView style={styles.content}>
         <View style={styles.row}>
-          <Text
-            style={[styles.selectionTitle, { color: Colors.light.secondary }]}
-          >
+          <Text style={[styles.selectionTitle, { color: Colors.light.secondary }]}>
             Recently Analyzed Hogs
           </Text>
+          {files.length > 0 && (
+            <TouchableOpacity onPress={clearAllHistory} style={styles.clearButton}>
+              <Text style={styles.clearButtonText}>Clear</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         <TouchableOpacity
@@ -349,11 +395,9 @@ export default function Index() {
               key={file.id}
               title={file.filename}
               subtitle={file.uploadTime}
-              showActions={true} 
+              showActions={true}
               onSeeResults={() => navigateToResults(file)}
-              onCheckAnalytics={() => {
-                // placeholder for analytics
-              }}
+              onCheckAnalytics={() => {}}
             >
               <Text style={styles.fileType}>Type: {file.type}</Text>
               {file.uri && file.type === "image" && (
@@ -383,21 +427,12 @@ export default function Index() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: Colors.light.background,
-  },
+  container: { flex: 1, backgroundColor: Colors.light.background },
   content: {},
-  selectionTitle: {
-    fontSize: 16,
-    fontFamily: "NunitoSans-SemiBold",
-    padding: 20,
-  },
-  row: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-  },
+  selectionTitle: { fontSize: 16, fontFamily: "NunitoSans-SemiBold", padding: 20 },
+  row: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", paddingRight: 20 },
+  clearButton: { padding: 20 },
+  clearButtonText: { color: Colors.light.secondary, fontSize: 14, fontFamily: "NunitoSans-SemiBold" },
   liveCameraButton: {
     marginHorizontal: 20,
     marginBottom: 16,
@@ -412,48 +447,37 @@ const styles = StyleSheet.create({
     shadowRadius: 3.84,
     elevation: 5,
   },
-  liveCameraText: {
-    color: 'white',
-    fontSize: 18,
-    fontFamily: 'NunitoSans-Bold',
+  liveCameraText: { 
+    color: 'white', 
+    fontSize: 18, 
+    fontFamily: 'NunitoSans-Bold' 
   },
-  emptyText: {
+  emptyText: { 
     textAlign: "center",
-    color: Colors.light.subtext,
-    marginTop: 40,
-    fontSize: 16,
-    fontFamily: "NunitoSans-Regular",
+    color: Colors.light.subtext, 
+    marginTop: 40, 
+    fontSize: 16, 
+    fontFamily: "NunitoSans-Regular" 
   },
-  fileType: {
-    fontSize: 14,
-    color: Colors.light.subtext,
-    marginBottom: 16,
-    fontFamily: "NunitoSans-Regular",
+  fileType: { 
+    fontSize: 14, 
+    color: Colors.light.subtext, 
+    marginBottom: 16, 
+    fontFamily: "NunitoSans-Regular" 
   },
-  previewImage: {
-    width: "100%",
-    height: 200,
-    marginTop: 8,
-    borderRadius: 8,
+  previewImage: { 
+    width: "100%", 
+    height: 200, 
+    marginTop: 8, 
+    borderRadius: 8 
   },
-  videoInfo: {
-    fontSize: 14,
-    color: Colors.light.subtext,
-    fontFamily: "NunitoSans-Regular",
+  videoInfo: { 
+    fontSize: 14, 
+    color: Colors.light.subtext, 
+    fontFamily: "NunitoSans-Regular" 
   },
-  seeResultsButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "flex-end",
-    marginTop: 8,
-  },
-  seeResultsText: {
-    color: Colors.light.secondary,
-    fontSize: 14,
-    fontFamily: "NunitoSans-SemiBold",
-  },
-  loadingContainer: {
-    alignItems: "center",
-    padding: 20,
+  loadingContainer: { 
+    alignItems: "center", 
+    padding: 20 
   },
 });

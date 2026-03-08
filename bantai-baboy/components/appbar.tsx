@@ -19,6 +19,9 @@ export interface AppBarProps {
     titleStyle?: TextStyle;
     leftIcon?: React.ReactNode;
     onLeftIconPress?: () => void;
+    rightIcon?: React.ReactNode;     
+    onRightIconPress?: () => void;
+    subtitle?: string;
 }
 
 export function AppBar({
@@ -28,12 +31,15 @@ export function AppBar({
     style,
     titleStyle,
     leftIcon,
-    onLeftIconPress
+    onLeftIconPress,
+    rightIcon,                         
+    onRightIconPress,
+    subtitle,
 }: AppBarProps) {
     const { colors } = useTheme();
     const insets = useSafeAreaInsets();
-
     const bgColor = backgroundColor || colors.background;
+
     const textColor = titleColor || colors.secondary;
 
     return (
@@ -53,9 +59,21 @@ export function AppBar({
                         {leftIcon}
                     </TouchableOpacity>
                 )}
-                <Text style={[styles.title, { color: textColor }, titleStyle]}>
-                    {title}
-                </Text>
+                <View style={styles.titleBlock}>                         
+                    <Text style={[styles.title, { color: textColor }, titleStyle]}>
+                        {title}
+                    </Text>
+                    {subtitle && (                                       
+                        <Text style={[styles.subtitle, { color: textColor }]}>
+                            {subtitle}
+                        </Text>
+                    )}
+                </View>
+                {rightIcon && (               
+                    <TouchableOpacity onPress={onRightIconPress} style={styles.rightIcon}>
+                        {rightIcon}
+                    </TouchableOpacity>
+                )}
             </View>
         </View>
         </>
@@ -81,6 +99,24 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
     },
+
+    titleBlock: {
+    flex: 1,
+    },
+    
+    subtitle: {
+        fontSize: 12,
+        fontFamily: 'NunitoSans-Regular',
+        opacity: 0.6,
+        marginTop: -4,
+    },
+
+    rightIcon: {
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginLeft: 'auto',  
+    },
+
     row: {
         flexDirection: 'row',
         alignItems: 'center',

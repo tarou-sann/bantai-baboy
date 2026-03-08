@@ -9,6 +9,7 @@ import * as Print from 'expo-print';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { useVideoPlayer, VideoView } from 'expo-video';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // --- TYPES ---
 interface PigSummary {
@@ -45,10 +46,11 @@ interface AnalysisResult {
     lethargy_flags?: number;
     limping_flags?: number;
     time_series?: TimeSeriesEntry[];
-    annotated_video?: string; // base64 video
+    annotated_video?: string;
 }
 
-const API_BASE_URL = "http://192.168.0.101:5000";
+const SERVER_URL_KEY = '@server_url';
+const DEFAULT_API_BASE_URL = "http://192.168.0.101:5000";
 
 export default function Results() {
     const params = useLocalSearchParams<{ filename?: string; uri?: string; type?: 'image' | 'video' }>();
@@ -60,21 +62,40 @@ export default function Results() {
     const [isSavingPdf, setIsSavingPdf] = useState(false);
     const [isSavingVideo, setIsSavingVideo] = useState(false);
     const [annotatedVideoUri, setAnnotatedVideoUri] = useState<string | null>(null);
+    const [serverUrl, setServerUrl] = useState(DEFAULT_API_BASE_URL);
 
-    // Use annotated video if available, otherwise use original
     const videoUri = type === 'video' ? (annotatedVideoUri || uri || '') : '';
     const videoPlayer = useVideoPlayer(videoUri || 'data:video/mp4;base64,', player => {
         player.loop = false;
     });
 
     useEffect(() => {
-        if (uri && type) {
+        loadServerUrl();
+    }, []);
+
+    useEffect(() => {
+        if (uri && type && serverUrl) {
             analyzeMedia();
-        } else {
+        } else if (!uri || !type) {
             setIsLoading(false);
             Alert.alert("Error", "Missing media file.");
         }
-    }, [uri, type]);
+    }, [uri, type, serverUrl]);
+
+    const loadServerUrl = async () => {
+        try {
+            const saved = await AsyncStorage.getItem(SERVER_URL_KEY);
+            if (saved) {
+                setServerUrl(saved);
+                console.log('✅ Using server URL:', saved);
+            } else {
+                setServerUrl(DEFAULT_API_BASE_URL);
+            }
+        } catch (error) {
+            console.error('Failed to load server URL:', error);
+            setServerUrl(DEFAULT_API_BASE_URL);
+        }
+    };
 
     const analyzeMedia = async () => {
         try {
@@ -95,7 +116,7 @@ export default function Results() {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 180000);
 
-            const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+            const response = await fetch(`${serverUrl}${endpoint}`, {
                 method: 'POST',
                 body: formData,
                 headers: {
@@ -111,7 +132,6 @@ export default function Results() {
             if (response.ok) {
                 setResultData(data as AnalysisResult);
                 
-                // If video analysis returned annotated video, save it as a local file
                 if (data.annotated_video && type === 'video') {
                     try {
                         const tempFileName = `temp_annotated_${Date.now()}.mp4`;
@@ -272,6 +292,38 @@ export default function Results() {
         } catch (err) {
             console.error('PDF error', err);
             Alert.alert('Export failed', 'Unable to create or share PDF.');
+        } finally {
+            setIsSavingPdf(false);
+        }
+    };
+
+    const exportToCSV = async () => {
+        if (!resultData) return Alert.alert('No data', 'No analysis data to export.');
+        if (isSavingPdf) return;
+
+        setIsSavingPdf(true);
+
+        try {
+            let csvContent = "Time,Pig Count,Behavior,Count,Lethargy,Limping\n";
+            
+            if (resultData.time_series) {
+            resultData.time_series.forEach((entry) => {
+                const behaviors = entry.behavior_breakdown || {};
+                Object.entries(behaviors).forEach(([behavior, data]) => {
+                csvContent += `${entry.time},${entry.pig_count},${behavior},${data.count},${entry.lethargy ? 'Yes' : 'No'},${entry.limping ? 'Yes' : 'No'}\n`;
+                });
+            });
+            }
+
+            const fileName = `bantai-data-${Date.now()}.csv`;
+            const destFile = new File(Paths.document, fileName);
+            await destFile.write(csvContent);
+            await Sharing.shareAsync(destFile.uri);
+            
+            Alert.alert('Success', 'CSV data exported!');
+        } catch (err) {
+            console.error('CSV export error', err);
+            Alert.alert('Export failed', 'Unable to export CSV.');
         } finally {
             setIsSavingPdf(false);
         }
@@ -512,7 +564,7 @@ export default function Results() {
                     <Text style={styles.errorText}>No results available.</Text>
                 )}
             </ScrollView>
-            
+
             {resultData && (
                 <View style={styles.bottomContainer}>
                     <TouchableOpacity
@@ -524,6 +576,15 @@ export default function Results() {
                         <Text style={styles.saveButtonText}>
                             {isSavingPdf ? 'Saving PDF...' : 'Save PDF Report'}
                         </Text>
+                    </TouchableOpacity>
+                    
+                    <TouchableOpacity
+                        style={[styles.saveButton, styles.csvButton, isSavingPdf && styles.saveButtonDisabled]}
+                        activeOpacity={0.8}
+                        onPress={exportToCSV}
+                        disabled={isSavingPdf}
+                    >
+                        <Text style={styles.saveButtonText}>Export Data (CSV)</Text>
                     </TouchableOpacity>
                     
                     {annotatedVideoUri && type === 'video' && (
@@ -556,6 +617,9 @@ const styles = StyleSheet.create({
         paddingHorizontal: 16,
         paddingTop: 16,
         paddingBottom: 8,
+    },
+    csvButton: {
+        backgroundColor: '#388E3C', 
     },
     previewWrapper: {
         width: '100%',

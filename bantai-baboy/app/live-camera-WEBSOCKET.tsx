@@ -6,6 +6,7 @@ import { X, Info } from 'phosphor-react-native';
 import { Colors } from '@/theme/colors';
 import Svg, { Rect, Text as SvgText } from 'react-native-svg';
 import * as ScreenOrientation from 'expo-screen-orientation';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 
 interface Detection {
@@ -25,12 +26,10 @@ interface WSResponse {
   processing_time_ms?: number;
   error?: string;
 }
+const SERVER_URL_KEY = '@server_url';
+const DEFAULT_SERVER_URL = 'http://192.168.0.101:5000';
+const MAX_PIGS_PER_FRAME = 20; 
 
-const SERVER_URL = "192.168.0.161:5000"; // 192.168.0.100:5000 (Tristan IP)
-const MAX_PIGS_PER_FRAME = 20; // raised — don't miss pigs in crowded scenes
-
-// Resize by width only — height auto-adjusts to preserve aspect ratio.
-// Forcing both width+height was distorting the image and misplacing boxes.
 const SEND_WIDTH = 640;
 
 const BEHAVIOR_COLORS: Record<string, string> = {
@@ -55,13 +54,27 @@ export default function LiveCameraWebSocket() {
   const [totalTrackedPigs, setTotalTrackedPigs] = useState(0);
   const [frameCount, setFrameCount] = useState(0);
   const [errorMessage, setErrorMessage] = useState('');
+  const [serverUrl, setServerUrl] = useState<string | null>(null);
 
   const cameraRef = useRef<any>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const streamIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pendingFrames = useRef(0);
   const isCapturing = useRef(false);
-  const isCameraReady = useRef(false); // ✅ Don't capture until camera is fully ready
+  const isCameraReady = useRef(false); 
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const saved = await AsyncStorage.getItem(SERVER_URL_KEY);
+        const url = saved || DEFAULT_SERVER_URL;
+        // Strip http:// prefix — WebSocket needs just host:port
+        setServerUrl(url.replace(/^https?:\/\//, ''));
+      } catch {
+        setServerUrl(DEFAULT_SERVER_URL.replace(/^https?:\/\//, ''));
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(() => {});
@@ -127,10 +140,10 @@ export default function LiveCameraWebSocket() {
   }, []);
 
   useEffect(() => {
-    if (!permission?.granted) return;
+    if (!permission?.granted || !serverUrl) return;
 
     const connect = () => {
-      const ws = new WebSocket(`ws://${SERVER_URL}/ws/live-stream`);
+      const ws = new WebSocket(`ws://${serverUrl}/ws/live-stream`);
       ws.onopen = () => { setIsConnected(true); setErrorMessage(''); };
 
       ws.onmessage = (event) => {
@@ -166,7 +179,7 @@ export default function LiveCameraWebSocket() {
       if (streamIntervalRef.current) clearInterval(streamIntervalRef.current);
       wsRef.current?.close();
     };
-  }, [permission?.granted]);
+  }, [permission?.granted, serverUrl]);
 
   if (!permission) return <View style={s.container}><Text style={s.msg}>Requesting permission...</Text></View>;
   if (!permission.granted) return (

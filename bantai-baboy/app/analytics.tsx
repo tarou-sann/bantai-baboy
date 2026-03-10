@@ -179,7 +179,6 @@ const mr = StyleSheet.create({
     value: { fontSize: 14, fontFamily: 'Nunito-Black', color: Colors.light.secondary },
 });
 
-// ─── Main Screen ──────────────────────────────────────────────────────────────
 export default function Analytics() {
     const router = useRouter();
     const params = useLocalSearchParams();
@@ -371,16 +370,15 @@ export default function Analytics() {
                     ))}
                 </DropdownItem>
 
-                {/* ── Model Metrics ─────────────────────────────────────────── */}
                 <DropdownItem title="Model Metrics">
                     <Text style={styles.metricsGroupLabel}>🔍 YOLO Detection (YOLOv8)</Text>
-                    <MetricRow label="mAP@0.5"   value="—" sub="Mean Average Precision at IoU 0.5" />
-                    <MetricRow label="Precision"  value="—" sub="True positives / (TP + FP)" />
-                    <MetricRow label="Recall"     value="—" sub="True positives / (TP + FN)" />
+                    <MetricRow label="mAP@50-95"   value="91%" sub="Overall object detection performance" />
+                    <MetricRow label="Precision"  value="84%" sub="Accuracy of positive predictions" />
+                    <MetricRow label="Recall"     value="81%" sub="Ability to find all actual targets" />
 
                     <Text style={[styles.metricsGroupLabel, { marginTop: 14 }]}>🧠 MobileNet Classifier</Text>
-                    <MetricRow label="Overall Accuracy" value="—" sub="Correct classifications / total" />
-                    <MetricRow label="Top-1 Confidence" value="—" sub="Avg. confidence on top prediction" />
+                    <MetricRow label="Classification Accuracy" value="88%" sub="Percentage of correctly predicted labels" />
+                    <MetricRow label="Training/Validation Loss" value="0.18" sub="Model error rate (lower is better)" />
                     <MetricRow
                         label="Behaviors Classified"
                         value={String(behaviorEntries.length)}

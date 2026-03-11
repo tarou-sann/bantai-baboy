@@ -46,7 +46,7 @@ export default function LiveCameraWebSocket() {
   const { width: SW, height: SH } = useWindowDimensions();
   const [permission, requestPermission] = useCameraPermissions();
   const [detections, setDetections] = useState<Detection[]>([]);
-  const [frameSize, setFrameSize] = useState({ width: SEND_WIDTH, height: 360 }); // height updated by server response
+  const [frameSize, setFrameSize] = useState({ width: SEND_WIDTH, height: 360 }); 
   const [isConnected, setIsConnected] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [fps, setFps] = useState(0);
@@ -68,7 +68,6 @@ export default function LiveCameraWebSocket() {
       try {
         const saved = await AsyncStorage.getItem(SERVER_URL_KEY);
         const url = saved || DEFAULT_SERVER_URL;
-        // Strip http:// prefix — WebSocket needs just host:port
         setServerUrl(url.replace(/^https?:\/\//, ''));
       } catch {
         setServerUrl(DEFAULT_SERVER_URL.replace(/^https?:\/\//, ''));
@@ -96,8 +95,6 @@ export default function LiveCameraWebSocket() {
 
       if (!photo?.uri) return;
 
-      // Resize by width only — aspect ratio preserved automatically.
-      // Previously forced 640x480 which squished landscape photos → wrong box positions.
       const resized = await manipulateAsync(
         photo.uri,
         [{ resize: { width: SEND_WIDTH } }],
@@ -191,7 +188,6 @@ export default function LiveCameraWebSocket() {
     </View>
   );
 
-  // Server returns boxes in sent-frame coords → scale to screen
   const scaleX = SW / frameSize.width;
   const scaleY = SH / frameSize.height;
 
@@ -269,7 +265,6 @@ export default function LiveCameraWebSocket() {
         )}
       </View>
 
-      {/* Info note overlay */}
       <View style={s.infoNote} pointerEvents="none">
         <Info size={14} color="white" weight="bold" />
         <Text style={s.infoNoteText}>Results may vary depending on the change of scenes in the video.</Text>

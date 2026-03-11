@@ -407,7 +407,6 @@ def analyze_video_with_overlay():
     try:
         result = analyze_video_data(file_path)
 
-        # Extract first frame as thumbnail
         cap = cv2.VideoCapture(file_path)
         thumb_b64 = None
         ret, first_frame = cap.read()
@@ -419,12 +418,10 @@ def analyze_video_with_overlay():
             thumb_b64 = base64.b64encode(buf).decode('utf-8')
         cap.release()
 
-        # Save original video and store detection data for export
         job_id = os.path.splitext(os.path.basename(file_path))[0]
         job_video_path = os.path.join(UPLOAD_FOLDER, f"job_{job_id}.mp4")
         os.rename(file_path, job_video_path)
 
-        # Store frame detections and health sets in memory
         job_store[job_id] = {
             "frame_detections": result["frame_detections"],
             "lethargic_ids": result["lethargic_ids"],

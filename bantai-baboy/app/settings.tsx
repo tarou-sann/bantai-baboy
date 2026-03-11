@@ -36,7 +36,6 @@ export default function Settings() {
   };
 
   const saveServerUrl = async () => {
-    // Validate URL format
     if (!serverUrl.startsWith('http://') && !serverUrl.startsWith('https://')) {
       Alert.alert('Invalid URL', 'URL must start with http:// or https://');
       return;

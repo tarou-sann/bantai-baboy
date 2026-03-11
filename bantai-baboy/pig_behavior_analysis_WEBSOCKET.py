@@ -342,6 +342,10 @@ job_store = {}
 
 # ─── Routes ──────────────────────────────────────────────────────────────────
 
+@app.route('/', methods=['GET'])
+def health():
+    return jsonify({'status': 'ok'})
+
 @app.route('/analyze-video', methods=['POST'])
 def analyze_video():
     file_path, error_response, status_code = handle_upload(request)

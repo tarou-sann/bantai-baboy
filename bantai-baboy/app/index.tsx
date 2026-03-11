@@ -35,6 +35,7 @@ const ONBOARDING_KEY = '@onboarding_done';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
+// ─── Pig Theme ────────────────────────────────────────────────────────────────
 const PIG = {
   pink:      '#de9baa',
   pinkLight: '#f5e4e8',

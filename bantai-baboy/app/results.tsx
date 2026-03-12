@@ -257,26 +257,12 @@ export default function Results() {
     const [showCausesModal,      setShowCausesModal]      = useState(false);
     const [showSuggestionsModal, setShowSuggestionsModal] = useState(false);
 
-    //for storage clearing/accidents 
-
-    // useEffect(() => {
-    // AsyncStorage.clear();
-    // }, []);
-
-    // useEffect(() => {
-    // if (!uri || !type) {
-    //     router.dismissAll();
-    //     }
-    // }, []);
-
     useEffect(() => { loadServerUrl(); }, []);
     useEffect(() => {
         if (!serverUrlLoaded) return;
         if (uri && type) analyzeMedia();
         else { setIsLoading(false); Alert.alert('Error', 'Missing media file.'); }
     }, [serverUrlLoaded]);
-
-    
 
     const loadServerUrl = async () => {
         try {
@@ -372,12 +358,37 @@ export default function Results() {
         if (!resultData || isSavingPdf) return;
         setIsSavingPdf(true);
         try {
-            let csv = 'Time,Pig Count,Behavior,Count,Lethargy,Limping\n';
-            resultData.time_series?.forEach(entry => {
-                Object.entries(entry.behavior_breakdown || {}).forEach(([b, d]) => {
-                    csv += `${entry.time},${entry.pig_count},${b},${d.count},${entry.lethargy ? 'Yes' : 'No'},${entry.limping ? 'Yes' : 'No'}\n`;
+            let csv = 'Time,Pig Count,Behavior,Behavior Count,Lethargy,Limping,Lethargic IDs,Limping IDs\n';
+
+            if (resultData.time_series && resultData.time_series.length > 0) {
+                resultData.time_series.forEach(entry => {
+                    const behaviors = entry.behavior_breakdown
+                        ? Object.entries(entry.behavior_breakdown)
+                        : [];
+                    if (behaviors.length === 0) {
+                        csv += `${entry.time},${entry.pig_count},,,${entry.lethargy ? 'Yes' : 'No'},${entry.limping ? 'Yes' : 'No'},"${(entry.lethargic_ids ?? []).join(';')}","${(entry.limping_ids ?? []).join(';')}"\n`;
+                    } else {
+                        behaviors.forEach(([behavior, data]) => {
+                            csv += `${entry.time},${entry.pig_count},${behavior},${(data as any).count},${entry.lethargy ? 'Yes' : 'No'},${entry.limping ? 'Yes' : 'No'},"${(entry.lethargic_ids ?? []).join(';')}","${(entry.limping_ids ?? []).join(';')}"\n`;
+                        });
+                    }
                 });
-            });
+            } else {
+                csv = 'Behavior,Count\n';
+                Object.entries(resultData.details || {})
+                    .sort(([, a], [, b]) => b - a)
+                    .forEach(([behavior, count]) => {
+                        csv += `${behavior},${count}\n`;
+                    });
+            }
+
+            if (resultData.pig_summaries?.length) {
+                csv += '\nPig ID,Predominant Behavior,Is Lethargic,Is Limping\n';
+                resultData.pig_summaries.forEach(pig => {
+                    csv += `${pig.pig_id},${pig.predominant_behavior},${pig.is_lethargic ? 'Yes' : 'No'},${pig.is_limping ? 'Yes' : 'No'}\n`;
+                });
+            }
+
             const dest = new File(Paths.document, `bantai-data-${Date.now()}.csv`);
             await dest.write(csv);
             await Sharing.shareAsync(dest.uri);
@@ -501,7 +512,6 @@ export default function Results() {
                     </View>
                 ) : resultData ? (
                     <>
-
                         <View style={s.summaryStrip}>
                             <View style={s.summaryItem}>
                                 <Text style={s.summaryValue}>{totalPigs}</Text>
@@ -598,13 +608,15 @@ export default function Results() {
                                 <Text style={s.exportLabel}>{isSavingPdf ? '...' : 'PDF'}</Text>
                             </TouchableOpacity>
 
-                            <TouchableOpacity
-                                style={[s.exportBtn, s.exportBtnGreen, isSavingPdf && s.exportBtnDisabled]}
-                                onPress={exportToCSV} disabled={isSavingPdf} activeOpacity={0.8}
-                            >
-                                <Text style={s.exportIcon}>📊</Text>
-                                <Text style={s.exportLabel}>CSV</Text>
-                            </TouchableOpacity>
+                            {type === 'video' && (
+                                <TouchableOpacity
+                                    style={[s.exportBtn, s.exportBtnGreen, isSavingPdf && s.exportBtnDisabled]}
+                                    onPress={exportToCSV} disabled={isSavingPdf} activeOpacity={0.8}
+                                >
+                                    <Text style={s.exportIcon}>📊</Text>
+                                    <Text style={s.exportLabel}>CSV</Text>
+                                </TouchableOpacity>
+                            )}
 
                             {type === 'video' && resultData.job_id && (
                                 <TouchableOpacity
@@ -634,274 +646,282 @@ export default function Results() {
 }
 
 const s = StyleSheet.create({
-    container: { 
-        flex: 1, 
-        backgroundColor: PIG.cream 
+    container: {
+        flex: 1,
+        backgroundColor: PIG.cream,
     },
 
-    content: { 
-        flex: 1 
+    content: {
+        flex: 1,
     },
 
     scrollContent: {
-        paddingBottom: 110 
+        paddingBottom: 110,
     },
 
-    appBarActions: { 
-        flexDirection: 'row', 
-        alignItems: 'center', 
-        gap: 2 
+    appBarActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 2,
     },
-    appBarBtn: { 
-        alignItems: 'center', 
-        paddingHorizontal: 8, 
-        paddingVertical: 4 
+
+    appBarBtn: {
+        alignItems: 'center',
+        paddingHorizontal: 8,
+        paddingVertical: 4,
     },
-    appBarBtnLabel: { 
-        fontSize: 10, 
-        fontFamily: 'NunitoSans-SemiBold', 
-        color: PIG.roseDark, 
-        marginTop: 2 
+
+    appBarBtnLabel: {
+        fontSize: 10,
+        fontFamily: 'NunitoSans-SemiBold',
+        color: PIG.roseDark,
+        marginTop: 2,
     },
 
     infoNote: {
-        flexDirection: 'row', 
+        flexDirection: 'row',
         alignItems: 'center',
-        paddingHorizontal: 14, 
-        paddingVertical: 7, 
+        paddingHorizontal: 14,
+        paddingVertical: 7,
         gap: 6,
         backgroundColor: PIG.pinkLight,
     },
 
-    infoNoteText: { 
-        fontSize: 11, 
-        fontFamily: 'NunitoSans-SemiBold', 
-        color: PIG.pinkDark, 
-        flexShrink: 1, 
-        opacity: 0.85 
+    infoNoteText: {
+        fontSize: 11,
+        fontFamily: 'NunitoSans-SemiBold',
+        color: PIG.pinkDark,
+        flexShrink: 1,
+        opacity: 0.85,
     },
 
-    previewWrapper: { 
-        width: '100%', 
-        height: 260, 
-        overflow: 'hidden' 
+    previewWrapper: {
+        width: '100%',
+        height: 260,
+        overflow: 'hidden',
     },
 
-    mediaPreview:{ 
-        width: '100%', 
-        height: '100%' 
+    mediaPreview: {
+        width: '100%',
+        height: '100%',
     },
 
     hogsBadge: {
-        position: 'absolute', 
-        bottom: 12, 
+        position: 'absolute',
+        bottom: 12,
         alignSelf: 'center',
         backgroundColor: 'rgba(0,0,0,0.55)',
-        paddingVertical: 5, 
-        paddingHorizontal: 16, 
+        paddingVertical: 5,
+        paddingHorizontal: 16,
         borderRadius: 20,
     },
 
     hogsBadgeText: {
-        color: 'white', 
-        fontSize: 13, 
-        fontFamily: 'NunitoSans-SemiBold' 
+        color: 'white',
+        fontSize: 13,
+        fontFamily: 'NunitoSans-SemiBold',
     },
 
     videoTag: {
-        position: 'absolute', 
-        top: 12, 
+        position: 'absolute',
+        top: 12,
         left: 12,
         backgroundColor: 'rgba(0,0,0,0.55)',
-        paddingVertical: 4, 
-        paddingHorizontal: 10, 
+        paddingVertical: 4,
+        paddingHorizontal: 10,
         borderRadius: 8,
     },
 
-    videoTagText: { 
-        color: 'white', 
-        fontSize: 11, 
-        fontFamily: 'NunitoSans-SemiBold' 
+    videoTagText: {
+        color: 'white',
+        fontSize: 11,
+        fontFamily: 'NunitoSans-SemiBold',
     },
 
     listIconBtn: {
-        position: 'absolute', 
-        bottom: 12, 
+        position: 'absolute',
+        bottom: 12,
         right: 12,
         backgroundColor: PIG.rose,
-        width: 36, 
-        height: 36, 
+        width: 36,
+        height: 36,
         borderRadius: 18,
-        alignItems: 'center', 
+        alignItems: 'center',
         justifyContent: 'center',
         elevation: 4,
     },
 
     summaryStrip: {
-        flexDirection: 'row', 
+        flexDirection: 'row',
         backgroundColor: PIG.roseDark,
-        paddingVertical: 14, 
-        paddingHorizontal: 20, 
+        paddingVertical: 14,
+        paddingHorizontal: 20,
         alignItems: 'center',
     },
 
-    summaryItem: { 
-        flex: 1, alignItems: 'center' 
+    summaryItem: {
+        flex: 1,
+        alignItems: 'center',
     },
 
-    summaryValue:{ 
+    summaryValue: {
         fontSize: 15,
-        fontFamily: 'NunitoSans-Bold', 
-        color: 'white', 
-        textAlign: 'center' 
+        fontFamily: 'NunitoSans-Bold',
+        color: 'white',
+        textAlign: 'center',
     },
 
-    summaryLabel:  { 
-        fontSize: 11, 
-        fontFamily: 'NunitoSans-Regular', 
-        color: PIG.snout, marginTop: 2 
+    summaryLabel: {
+        fontSize: 11,
+        fontFamily: 'NunitoSans-Regular',
+        color: PIG.snout,
+        marginTop: 2,
     },
 
-    summaryDivider: { 
-        width: 1, 
-        height: 36, 
-        backgroundColor: 'rgba(255,255,255,0.2)' 
+    summaryDivider: {
+        width: 1,
+        height: 36,
+        backgroundColor: 'rgba(255,255,255,0.2)',
     },
 
-    badgeRow: { 
-        flexDirection: 'row', 
-        flexWrap: 'wrap', 
-        paddingHorizontal: 16, 
-        paddingTop: 12, 
-        paddingBottom: 4 
+    badgeRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        paddingHorizontal: 16,
+        paddingTop: 12,
+        paddingBottom: 4,
     },
 
-    section: { 
-        paddingHorizontal: 16, 
-        marginTop: 16 
-    },
-    sectionHeader: { 
-        flexDirection: 'row', 
-        alignItems: 'center', 
-        justifyContent: 'space-between', 
-        marginBottom: 10 
+    section: {
+        paddingHorizontal: 16,
+        marginTop: 16,
     },
 
-    sectionTitle: { 
-        fontSize: 16, 
-        fontFamily: 'NunitoSans-Bold', 
-        color: PIG.roseDark 
+    sectionHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 10,
     },
 
-    sectionSub: { 
-        fontSize: 12, 
-        fontFamily: 'NunitoSans-Regular', 
-        color: PIG.pinkDark 
+    sectionTitle: {
+        fontSize: 16,
+        fontFamily: 'NunitoSans-Bold',
+        color: PIG.roseDark,
     },
 
-    flagLabel:    { 
-        fontSize: 13, 
-        fontFamily: 'NunitoSans-SemiBold', 
-        color: PIG.roseDark, 
-        marginBottom: 6 
+    sectionSub: {
+        fontSize: 12,
+        fontFamily: 'NunitoSans-Regular',
+        color: PIG.pinkDark,
     },
 
-    flagRow: { 
-        flexDirection: 'row', 
-        flexWrap: 'wrap', 
-        gap: 6 
-    },
-        
-    flagChip: { 
-        borderRadius: 12, 
-        paddingHorizontal: 10, 
-        paddingVertical: 4, 
-        borderWidth: 1 
+    flagLabel: {
+        fontSize: 13,
+        fontFamily: 'NunitoSans-SemiBold',
+        color: PIG.roseDark,
+        marginBottom: 6,
     },
 
-    flagChipText: { 
-        fontSize: 12, 
-        fontFamily: 'NunitoSans-SemiBold' 
+    flagRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 6,
     },
 
-    loadingContainer: { 
-        alignItems: 'center', 
-        marginTop: 40 
+    flagChip: {
+        borderRadius: 12,
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderWidth: 1,
+    },
+
+    flagChipText: {
+        fontSize: 12,
+        fontFamily: 'NunitoSans-SemiBold',
+    },
+
+    loadingContainer: {
+        alignItems: 'center',
+        marginTop: 40,
     },
 
     loadingText: {
-        marginTop: 10, 
-        color: PIG.pinkDark, 
-        fontFamily: 'NunitoSans-Regular' 
+        marginTop: 10,
+        color: PIG.pinkDark,
+        fontFamily: 'NunitoSans-Regular',
     },
 
-    errorText: { 
-        textAlign: 'center', 
-        color: 'red', 
-        marginTop: 20, 
-        fontFamily: 'NunitoSans-Regular' 
+    errorText: {
+        textAlign: 'center',
+        color: 'red',
+        marginTop: 20,
+        fontFamily: 'NunitoSans-Regular',
     },
 
     bottomBar: {
-        position: 'absolute', 
-        bottom: 0, 
-        left: 0, 
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
         right: 0,
         backgroundColor: PIG.cream,
-        paddingHorizontal: 20, 
-        paddingBottom: 28, 
+        paddingHorizontal: 20,
+        paddingBottom: 28,
         paddingTop: 12,
-        borderTopWidth: 1, 
+        borderTopWidth: 1,
         borderTopColor: PIG.snout,
         elevation: 10,
     },
 
-    exportRow: { 
-        flexDirection: 'row', 
-        justifyContent: 'center', 
-        gap: 12, 
-        marginBottom: 12 
+    exportRow: {
+        flexDirection: 'row',
+        justifyContent: 'center',
+        gap: 12,
+        marginBottom: 12,
     },
 
     exportBtn: {
-        flex: 1, 
+        flex: 1,
         backgroundColor: PIG.roseDark,
-        borderRadius: 12, 
+        borderRadius: 12,
         paddingVertical: 12,
-        alignItems: 'center', 
+        alignItems: 'center',
         justifyContent: 'center',
     },
 
-    exportBtnGreen: { 
-        backgroundColor: '#388E3C' 
+    exportBtnGreen: {
+        backgroundColor: '#388E3C',
     },
-    exportBtnBlue: { 
-        backgroundColor: '#1565C0' 
+
+    exportBtnBlue: {
+        backgroundColor: '#1565C0',
     },
-    exportBtnDisabled: { 
-        opacity: 0.5 
+
+    exportBtnDisabled: {
+        opacity: 0.5,
     },
-    exportIcon: { 
-        fontSize: 20 
+
+    exportIcon: {
+        fontSize: 20,
     },
-    exportLabel: { 
-        fontSize: 12, 
-        fontFamily: 'NunitoSans-Bold', 
-        color: 'white', 
-        marginTop: 2 
+
+    exportLabel: {
+        fontSize: 12,
+        fontFamily: 'NunitoSans-Bold',
+        color: 'white',
+        marginTop: 2,
     },
 
     saveToggleBtn: {
-        backgroundColor: PIG.rose, 
+        backgroundColor: PIG.rose,
         borderRadius: 14,
-        paddingVertical: 14, 
+        paddingVertical: 14,
         alignItems: 'center',
     },
 
-    saveToggleBtnText: { 
-        color: 'white', 
-        fontSize: 15, 
-        fontFamily: 'NunitoSans-Bold'
+    saveToggleBtnText: {
+        color: 'white',
+        fontSize: 15,
+        fontFamily: 'NunitoSans-Bold',
     },
-    
 });

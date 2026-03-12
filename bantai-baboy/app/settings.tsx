@@ -131,7 +131,7 @@ export default function Settings() {
 
           <TouchableOpacity
             style={styles.presetButton}
-            onPress={() => setServerUrl('http://10.0.0.5:5000')}
+            onPress={() => setServerUrl('http://10.201.1.168:5000')}
           >
             <Text style={styles.presetText}>📱 Hotspot (10.0.0.5)</Text>
           </TouchableOpacity>

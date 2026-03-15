@@ -26,6 +26,7 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 # --- GLOBAL MODEL VARIABLES ---
 yolo_model = None
 behavior_model = None
+embedding_model = None
 
 # --- ID MAPPING ---
 id_mapper = {}
@@ -44,11 +45,17 @@ def reset_id_mapper():
     next_clean_id = 1
 
 def load_models():
-    global yolo_model, behavior_model
+    global yolo_model, behavior_model, embedding_model
     if yolo_model is None or behavior_model is None:
         print("Loading models... please wait...")
         yolo_model = YOLO('pig_baseline7/2nd_weight/best.pt')
         behavior_model = tf.keras.models.load_model(MOBILENET_PATH)
+        # Tap dense_1 layer (128-dim) as Re-ID embedding
+        # Layer index -3 = dense_1 (skipping dropout_1 and dense_2)
+        embedding_model = tf.keras.Model(
+            inputs=behavior_model.inputs,
+            outputs=behavior_model.layers[-3].output
+        )
         print("Models loaded!")
     else:
         print("Models already loaded.")
@@ -69,7 +76,6 @@ def handle_upload(request):
 
 
 def reencode_to_h264(input_path, output_path):
-    """Re-encode mp4v to H.264 via ffmpeg for Messenger/iOS compatibility."""
     try:
         result = subprocess.run(
             [
@@ -93,13 +99,61 @@ def reencode_to_h264(input_path, output_path):
         return input_path
 
 
-# ─── Analysis only, but stores per-frame detections for replay ───────────────
+# ─── Re-ID Helpers ────────────────────────────────────────────────────────────
+
+def cosine_similarity(a, b):
+    a, b = np.array(a), np.array(b)
+    denom = (np.linalg.norm(a) * np.linalg.norm(b))
+    if denom == 0:
+        return 0.0
+    return float(np.dot(a, b) / denom)
+
+
+def extract_embeddings_from_crops(crops_dict):
+    if not crops_dict:
+        return {}
+    ids = list(crops_dict.keys())
+    batch = np.array([
+        cv2.resize(crops_dict[i], (224, 224)).astype('float32') / 255.0
+        for i in ids
+    ])
+    embeddings = embedding_model.predict(batch, verbose=0)
+    return {pig_id: embeddings[i].tolist() for i, pig_id in enumerate(ids)}
+
+
+def match_pigs(prev_embeddings, new_embeddings, threshold=0.75):
+    mapping = {}
+    used_prev_ids = set()
+
+    scored = []
+    for new_id, new_emb in new_embeddings.items():
+        for prev_id, prev_emb in prev_embeddings.items():
+            sim = cosine_similarity(new_emb, prev_emb)
+            scored.append((sim, new_id, prev_id))
+    scored.sort(reverse=True)
+
+    for sim, new_id, prev_id in scored:
+        if new_id in mapping:
+            continue
+        if prev_id in used_prev_ids:
+            continue
+        if sim >= threshold:
+            mapping[new_id] = prev_id
+            used_prev_ids.add(prev_id)
+
+    max_existing = max(prev_embeddings.keys(), default=0)
+    next_new = max_existing + 1
+    for new_id in new_embeddings:
+        if new_id not in mapping:
+            mapping[new_id] = next_new
+            next_new += 1
+
+    return mapping
+
+
+# ─── Analysis ────────────────────────────────────────────────────────────────
+
 def analyze_video_data(video_path):
-    """
-    Runs analysis and returns results.
-    Also returns frame_detections: a dict of {frame_number: [(x1,y1,x2,y2,clean_id,behavior)]}
-    so the export pass can replay exactly what was detected without re-running YOLO.
-    """
     reset_id_mapper()
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30
@@ -124,9 +178,8 @@ def analyze_video_data(video_path):
     interval_limping_ids = set()
     current_interval = 0
     frame_count = 0
-
-    # Stores detections per sampled frame: {frame_num: [(x1,y1,x2,y2,clean_id,behavior)]}
     frame_detections = {}
+    last_pig_crops = {}
 
     while cap.isOpened():
         ret, frame = cap.read()
@@ -172,18 +225,19 @@ def analyze_video_data(video_path):
                 if crop.size > 0:
                     crops.append(cv2.resize(crop, (224, 224)).astype('float32') / 255.0)
                     cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
-                    meta.append((bytetrack_id, x1, y1, x2, y2, cx, cy))
+                    meta.append((bytetrack_id, x1, y1, x2, y2, cx, cy, crop))
 
             if crops:
                 preds = behavior_model.predict(np.array(crops), verbose=0)
                 frame_dets = []
-                for (bytetrack_id, x1, y1, x2, y2, cx, cy), pred in zip(meta, preds):
+                for (bytetrack_id, x1, y1, x2, y2, cx, cy, raw_crop), pred in zip(meta, preds):
                     clean_id = get_clean_pig_id(bytetrack_id)
                     current_behavior = BEHAVIOR_CLASSES[np.argmax(pred)]
                     behavior_counts[current_behavior] += 1
                     pig_behavior_history[clean_id][current_behavior] += 1
                     interval_pig_ids.add(clean_id)
                     interval_pig_behaviors[clean_id] = current_behavior
+                    last_pig_crops[clean_id] = raw_crop
 
                     prev_pos = track_history[clean_id][-1] if track_history[clean_id] else None
                     track_history[clean_id].append((cx, cy))
@@ -206,7 +260,6 @@ def analyze_video_data(video_path):
                                 limping_pigs.add(clean_id)
                                 interval_limping_ids.add(clean_id)
 
-                    # Store this detection for replay during export
                     frame_dets.append((x1, y1, x2, y2, clean_id, current_behavior))
 
                 frame_detections[frame_count] = frame_dets
@@ -230,6 +283,9 @@ def analyze_video_data(video_path):
         })
 
     cap.release()
+
+    pig_embeddings = extract_embeddings_from_crops(last_pig_crops)
+
     pig_summaries = []
     for pig_id, behaviors in pig_behavior_history.items():
         predominant_behavior = max(behaviors, key=behaviors.get)
@@ -242,6 +298,7 @@ def analyze_video_data(video_path):
         })
     pig_summaries.sort(key=lambda x: x["pig_id"])
     most_common = max(behavior_counts, key=behavior_counts.get) if sum(behavior_counts.values()) > 0 else "No Pig Detected"
+
     return {
         "primary_behavior": most_common,
         "overall_behavior_counts": behavior_counts,
@@ -252,39 +309,67 @@ def analyze_video_data(video_path):
         "time_series": time_series,
         "lethargic_ids": lethargic_pigs,
         "limping_ids": limping_pigs,
-        "frame_detections": frame_detections,  # key addition
+        "frame_detections": frame_detections,
+        "pig_embeddings": pig_embeddings,
     }
 
 
 def analyze_image_data(image_path):
     img = cv2.imread(image_path)
     if img is None:
-        return "Error: Could not read image", {}
+        return "Error: Could not read image", {}, None
     behavior_counts = {cls: 0 for cls in BEHAVIOR_CLASSES}
+    pig_summaries = []
+    annotated = img.copy()
+
     results = yolo_model(img, conf=0.3, verbose=False)
     if len(results[0].boxes) > 0:
         boxes = results[0].boxes.xyxy.cpu().numpy().astype(int)
         crops = []
+        valid_boxes = []
         for box in boxes:
             x1, y1, x2, y2 = box
             crop = img[y1:y2, x1:x2]
             if crop.size > 0:
                 crops.append(cv2.resize(crop, (224, 224)).astype('float32') / 255.0)
+                valid_boxes.append(box)
         if crops:
             preds = behavior_model.predict(np.array(crops), verbose=0)
-            for pred in preds:
-                behavior_counts[BEHAVIOR_CLASSES[np.argmax(pred)]] += 1
+            for i, (box, pred) in enumerate(zip(valid_boxes, preds)):
+                x1, y1, x2, y2 = box
+                behavior = BEHAVIOR_CLASSES[np.argmax(pred)]
+                behavior_counts[behavior] += 1
+                pig_id = i + 1
+                pig_summaries.append({
+                    "pig_id": pig_id,
+                    "predominant_behavior": behavior,
+                    "behavior_counts": {behavior: 1},
+                    "is_lethargic": False,
+                    "is_limping": False,
+                })
+                # Draw bounding box
+                color = (0, 200, 100)
+                cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+                label = f"ID:{pig_id} | {behavior}"
+                (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
+                cv2.rectangle(annotated, (x1, y1 - th - 10), (x1 + tw, y1), color, -1)
+                cv2.putText(annotated, label, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
+
+    # Encode annotated image to base64
+    h, w = annotated.shape[:2]
+    if w > 720:
+        annotated = cv2.resize(annotated, (720, int(h * 720 / w)))
+    _, buf = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    annotated_b64 = base64.b64encode(buf).decode('utf-8')
+
     total_detected = sum(behavior_counts.values())
     most_common = max(behavior_counts, key=behavior_counts.get) if total_detected > 0 else "No Pig Detected"
-    return most_common, behavior_counts
+    return most_common, behavior_counts, annotated_b64, pig_summaries
 
 
-# ─── Overlay renderer — replays stored detections, no YOLO re-run ────────────
+# ─── Overlay renderer ────────────────────────────────────────────────────────
+
 def render_overlay(video_path, output_path, frame_detections, lethargic_ids, limping_ids):
-    """
-    Draws annotations by replaying the detections captured during analysis.
-    No YOLO re-run means boxes/IDs are 100% consistent with the results shown.
-    """
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -295,7 +380,7 @@ def render_overlay(video_path, output_path, frame_detections, lethargic_ids, lim
     out = cv2.VideoWriter(raw_output_path, fourcc, fps, (width, height))
 
     frame_count = 0
-    last_boxes = []  # carry forward last known detections to non-sampled frames
+    last_boxes = []
 
     while cap.isOpened():
         ret, frame = cap.read()
@@ -304,7 +389,6 @@ def render_overlay(video_path, output_path, frame_detections, lethargic_ids, lim
         frame_count += 1
         annotated = frame.copy()
 
-        # If this was a sampled frame, update last_boxes from stored detections
         if frame_count in frame_detections:
             last_boxes = frame_detections[frame_count]
 
@@ -336,7 +420,6 @@ def render_overlay(video_path, output_path, frame_detections, lethargic_ids, lim
 
 
 # ─── In-memory job store ──────────────────────────────────────────────────────
-# Stores frame_detections and health sets while the job video is on disk
 job_store = {}
 
 
@@ -345,6 +428,7 @@ job_store = {}
 @app.route('/', methods=['GET'])
 def health():
     return jsonify({'status': 'ok'})
+
 
 @app.route('/analyze-video', methods=['POST'])
 def analyze_video():
@@ -380,13 +464,15 @@ def analyze_image():
         return error_response, status_code
     print(f"Analyzing Image: {os.path.basename(file_path)}...")
     try:
-        result_text, detailed_counts = analyze_image_data(file_path)
+        result_text, detailed_counts, annotated_b64, pig_summaries = analyze_image_data(file_path)
         return jsonify({
             "status": "success",
             "media_type": "image",
             "detected_pigs_count": sum(detailed_counts.values()),
             "primary_behavior": result_text,
-            "details": detailed_counts
+            "details": detailed_counts,
+            "annotated_image": annotated_b64,
+            "pig_summaries": pig_summaries,
         })
     except Exception as e:
         print(f"Image Analysis Error: {e}")
@@ -398,10 +484,6 @@ def analyze_image():
 
 @app.route('/analyze-video-with-overlay', methods=['POST'])
 def analyze_video_with_overlay():
-    """
-    Fast path: runs analysis only, returns data + first frame immediately.
-    Stores frame detections in memory so export can replay them exactly.
-    """
     file_path, error_response, status_code = handle_upload(request)
     if error_response:
         return error_response, status_code
@@ -430,6 +512,7 @@ def analyze_video_with_overlay():
             "frame_detections": result["frame_detections"],
             "lethargic_ids": result["lethargic_ids"],
             "limping_ids": result["limping_ids"],
+            "pig_embeddings": result["pig_embeddings"],
         }
 
         return jsonify({
@@ -455,10 +538,6 @@ def analyze_video_with_overlay():
 
 @app.route('/export-annotated-video/<job_id>', methods=['POST'])
 def export_annotated_video(job_id):
-    """
-    On-demand overlay renderer. Replays stored detections — no YOLO re-run.
-    All 5 pigs (or however many were detected) will appear in the video.
-    """
     job_video_path = os.path.join(UPLOAD_FOLDER, f"job_{job_id}.mp4")
     if not os.path.exists(job_video_path):
         return jsonify({"error": "Job video not found. It may have expired."}), 404
@@ -495,6 +574,66 @@ def export_annotated_video(job_id):
             if path and os.path.exists(path):
                 os.remove(path)
         job_store.pop(job_id, None)
+
+
+@app.route('/match-pigs', methods=['POST'])
+def match_pigs_endpoint():
+    """
+    Matches pigs across sessions using embedding cosine similarity.
+
+    Request body:
+    {
+        "new_job_id": "abc123",
+        "persistent_embeddings": {       <- pass {} or omit for first clip
+            "1": [...128 floats...],
+            "2": [...128 floats...]
+        }
+    }
+
+    Response:
+    {
+        "id_mapping": {"1": 1, "3": 2},         <- new_bytetrack_id -> persistent_id
+        "updated_embeddings": {"1": [...], ...}  <- store this in AsyncStorage for next clip
+    }
+    """
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "JSON body required"}), 400
+
+    new_job_id = data.get("new_job_id")
+    persistent_embeddings_raw = data.get("persistent_embeddings", {})
+
+    if not new_job_id:
+        return jsonify({"error": "new_job_id is required"}), 400
+
+    if new_job_id not in job_store:
+        return jsonify({"error": f"Job {new_job_id} not found. Analyze the video first."}), 404
+
+    new_embeddings = job_store[new_job_id].get("pig_embeddings", {})
+
+    if not new_embeddings:
+        return jsonify({"error": "No embeddings found for this job."}), 404
+
+    persistent_embeddings = {int(k): v for k, v in persistent_embeddings_raw.items()}
+
+    if not persistent_embeddings:
+        id_mapping = {new_id: new_id for new_id in new_embeddings}
+        updated_embeddings = {new_id: emb for new_id, emb in new_embeddings.items()}
+    else:
+        id_mapping = match_pigs(persistent_embeddings, new_embeddings, threshold=0.75)
+        updated_embeddings = dict(persistent_embeddings)
+        for new_id, persistent_id in id_mapping.items():
+            new_emb = np.array(new_embeddings[new_id])
+            if persistent_id in updated_embeddings:
+                old_emb = np.array(updated_embeddings[persistent_id])
+                updated_embeddings[persistent_id] = ((old_emb + new_emb) / 2).tolist()
+            else:
+                updated_embeddings[persistent_id] = new_emb.tolist()
+
+    return jsonify({
+        "id_mapping": {str(k): v for k, v in id_mapping.items()},
+        "updated_embeddings": {str(k): v for k, v in updated_embeddings.items()}
+    })
 
 
 @app.route('/live-detect', methods=['POST'])
@@ -651,6 +790,7 @@ if __name__ == '__main__':
     print("🚀 Starting Flask server with WebSocket support")
     print("📡 HTTP endpoints: /analyze-video, /analyze-image, /live-detect")
     print("📡                  /analyze-video-with-overlay, /export-annotated-video/<job_id>")
+    print("📡                  /match-pigs  ← Re-ID endpoint")
     print("🔌 WebSocket endpoint: ws://YOUR_IP:5000/ws/live-stream")
     print("=" * 60)
     app.run(host='0.0.0.0', port=5000, debug=True)

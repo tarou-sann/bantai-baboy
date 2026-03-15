@@ -48,10 +48,24 @@ interface AnalysisResult {
     lethargy_flags?: number; limping_flags?: number;
     time_series?: TimeSeriesEntry[];
     first_frame?: string; job_id?: string;
+    annotated_image?: string;
 }
 
-const SERVER_URL_KEY = '@server_url';
+interface SessionClip {
+    job_id: string;
+    filename: string;
+    timestamp: string;
+    clip_index: number;
+    pig_summaries: PigSummary[];
+    primary_behavior: string;
+    total_unique_pigs: number;
+    time_series?: TimeSeriesEntry[];
+}
+
+const SERVER_URL_KEY      = '@server_url';
 const DEFAULT_API_BASE_URL = 'http://192.168.0.101:5000';
+const SESSION_CLIPS_KEY   = '@session_clips';
+const SESSION_EMBEDDINGS_KEY = '@session_embeddings';
 
 const BEHAVIOR_ICONS: Record<string, string> = {
     'Drinking':      '💧',
@@ -242,23 +256,33 @@ const im = StyleSheet.create({
 });
 
 export default function Results() {
-    const params = useLocalSearchParams<{ filename?: string; uri?: string; type?: 'image' | 'video' }>();
+    const params = useLocalSearchParams<{ filename?: string; uri?: string; type?: 'image' | 'video'; analysisData?: string }>();
     const router = useRouter();
-    const { filename, uri, type } = params;
+    const { filename, uri, type, analysisData } = params;
 
-    const [isLoading,        setIsLoading]        = useState(true);
-    const [resultData,       setResultData]        = useState<AnalysisResult | null>(null);
-    const [isSavingPdf,      setIsSavingPdf]       = useState(false);
-    const [isExportingVideo, setIsExportingVideo]  = useState(false);
-    const [serverUrl,        setServerUrl]         = useState(DEFAULT_API_BASE_URL);
-    const [serverUrlLoaded,  setServerUrlLoaded]   = useState(false);
-    const [showExports,      setShowExports]       = useState(false);
+    const [isLoading,            setIsLoading]            = useState(true);
+    const [isMatchingPigs,       setIsMatchingPigs]       = useState(false);
+    const [resultData,           setResultData]           = useState<AnalysisResult | null>(null);
+    const [isSavingPdf,          setIsSavingPdf]          = useState(false);
+    const [isExportingVideo,     setIsExportingVideo]     = useState(false);
+    const [serverUrl,            setServerUrl]            = useState(DEFAULT_API_BASE_URL);
+    const [serverUrlLoaded,      setServerUrlLoaded]      = useState(false);
+    const [showExports,          setShowExports]          = useState(false);
     const [showBehaviorModal,    setShowBehaviorModal]    = useState(false);
     const [showCausesModal,      setShowCausesModal]      = useState(false);
     const [showSuggestionsModal, setShowSuggestionsModal] = useState(false);
+    const [showFullImage,        setShowFullImage]        = useState(false);
 
-    useEffect(() => { loadServerUrl(); }, []);
     useEffect(() => {
+        if (analysisData) {
+            try { setResultData(JSON.parse(analysisData) as AnalysisResult); } catch {}
+            setIsLoading(false);
+            return;
+        }
+        loadServerUrl();
+    }, []);
+    useEffect(() => {
+        if (analysisData) return;
         if (!serverUrlLoaded) return;
         if (uri && type) analyzeMedia();
         else { setIsLoading(false); Alert.alert('Error', 'Missing media file.'); }
@@ -291,11 +315,77 @@ export default function Results() {
             });
             clearTimeout(timeoutId);
             const data = await response.json();
-            if (response.ok) setResultData(data as AnalysisResult);
-            else Alert.alert('Analysis Error', data.error || 'Something went wrong');
+            if (response.ok) {
+                setResultData(data as AnalysisResult);
+                if (type === 'video' && data.job_id) {
+                    await matchAndSaveSession(data);
+                }
+            } else {
+                Alert.alert('Analysis Error', data.error || 'Something went wrong');
+            }
         } catch {
             Alert.alert('Network Error', 'Could not connect to the server. Check your IP and ensure the Flask app is running.');
         } finally { setIsLoading(false); }
+    };
+
+    const matchAndSaveSession = async (data: AnalysisResult) => {
+        if (!data.job_id) return;
+        setIsMatchingPigs(true);
+
+        let remappedSummaries: PigSummary[] = data.pig_summaries ?? [];
+
+        try {
+            const savedUrl = await AsyncStorage.getItem(SERVER_URL_KEY);
+            const activeUrl = savedUrl || DEFAULT_API_BASE_URL;
+
+            const storedEmbeddings = await AsyncStorage.getItem(SESSION_EMBEDDINGS_KEY);
+            const persistentEmbeddings = storedEmbeddings ? JSON.parse(storedEmbeddings) : {};
+
+            const matchResponse = await fetch(`${activeUrl}/match-pigs`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    new_job_id: data.job_id,
+                    persistent_embeddings: persistentEmbeddings,
+                }),
+            });
+
+            if (matchResponse.ok) {
+                const matchResult = await matchResponse.json();
+                const idMapping: Record<string, number> = matchResult.id_mapping;
+                await AsyncStorage.setItem(SESSION_EMBEDDINGS_KEY, JSON.stringify(matchResult.updated_embeddings));
+                remappedSummaries = (data.pig_summaries ?? []).map(pig => ({
+                    ...pig,
+                    pig_id: idMapping[String(pig.pig_id)] ?? pig.pig_id,
+                }));
+            } else {
+                console.warn('match-pigs failed, saving clip with original IDs');
+            }
+        } catch (e) {
+            console.warn('Re-ID matching failed, saving clip anyway:', e);
+        }
+
+        try {
+            const storedClips = await AsyncStorage.getItem(SESSION_CLIPS_KEY);
+            const clips: SessionClip[] = storedClips ? JSON.parse(storedClips) : [];
+
+            const newClip: SessionClip = {
+                job_id: data.job_id,
+                filename: filename ?? 'video.mp4',
+                timestamp: new Date().toLocaleString(),
+                clip_index: clips.length + 1,
+                pig_summaries: remappedSummaries,
+                primary_behavior: data.primary_behavior,
+                total_unique_pigs: data.total_unique_pigs ?? 0,
+                time_series: data.time_series ?? [],
+            };
+
+            await AsyncStorage.setItem(SESSION_CLIPS_KEY, JSON.stringify([newClip, ...clips]));
+        } catch (e) {
+            console.error('Failed to save session clip:', e);
+        } finally {
+            setIsMatchingPigs(false);
+        }
     };
 
     const exportAnnotatedVideo = async () => {
@@ -396,16 +486,18 @@ export default function Results() {
         finally { setIsSavingPdf(false); }
     };
 
-    const totalPigs     = resultData?.detected_pigs_count ?? resultData?.total_unique_pigs ?? 0;
-    const lethargyCount = resultData?.lethargy_flags ?? 0;
-    const limpingCount  = resultData?.limping_flags  ?? 0;
-    const normalCount   = Math.max(0, totalPigs - lethargyCount - limpingCount);
-    const primaryBehavior = resultData?.primary_behavior ?? '';
+    const totalPigs      = resultData?.detected_pigs_count ?? resultData?.total_unique_pigs ?? 0;
+    const lethargyCount  = resultData?.lethargy_flags ?? 0;
+    const limpingCount   = resultData?.limping_flags  ?? 0;
+    const normalCount    = Math.max(0, totalPigs - lethargyCount - limpingCount);
+    const primaryBehavior  = resultData?.primary_behavior ?? '';
     const causesItems      = BEHAVIOR_CAUSES[primaryBehavior]      ?? ['Behavior context not available for this detection.'];
     const suggestionsItems = BEHAVIOR_SUGGESTIONS[primaryBehavior] ?? ['Continue monitoring your herd regularly.'];
 
     const previewUri = type === 'image'
-        ? uri
+        ? (resultData?.annotated_image
+            ? `data:image/jpeg;base64,${resultData.annotated_image}`
+            : uri)
         : resultData?.first_frame
             ? `data:image/jpeg;base64,${resultData.first_frame}`
             : uri;
@@ -418,6 +510,24 @@ export default function Results() {
                 onClose={() => setShowBehaviorModal(false)}
                 details={resultData?.details ?? {}}
             />
+
+            {/* Fullscreen image viewer */}
+            <Modal visible={showFullImage} transparent animationType="fade" onRequestClose={() => setShowFullImage(false)}>
+                <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' }}>
+                    <TouchableOpacity
+                        style={{ position: 'absolute', top: 48, right: 20, zIndex: 10, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 20, padding: 8 }}
+                        onPress={() => setShowFullImage(false)}
+                        activeOpacity={0.8}
+                    >
+                        <Text style={{ color: 'white', fontSize: 16, fontFamily: 'NunitoSans-Bold', paddingHorizontal: 8 }}>✕ Close</Text>
+                    </TouchableOpacity>
+                    <RNImage
+                        source={{ uri: previewUri as string }}
+                        style={{ width: '100%', height: '85%' }}
+                        resizeMode="contain"
+                    />
+                </View>
+            </Modal>
             <InfoModal
                 visible={showCausesModal}
                 onClose={() => setShowCausesModal(false)}
@@ -479,7 +589,11 @@ export default function Results() {
 
             <ScrollView style={s.content} contentContainerStyle={s.scrollContent}>
 
-                <View style={s.previewWrapper}>
+                <TouchableOpacity
+                    activeOpacity={0.9}
+                    onPress={() => resultData && setShowFullImage(true)}
+                    style={s.previewWrapper}
+                >
                     <RNImage source={{ uri: previewUri as string }} style={s.mediaPreview} resizeMode="cover" />
 
                     {!isLoading && resultData && (
@@ -499,16 +613,27 @@ export default function Results() {
                     )}
 
                     {resultData && !isLoading && (
+                        <View style={s.tapHint}>
+                            <Text style={s.tapHintText}>🔍 Tap to view full image</Text>
+                        </View>
+                    )}
+
+                    {resultData && !isLoading && (
                         <TouchableOpacity style={s.listIconBtn} onPress={() => setShowBehaviorModal(true)} activeOpacity={0.8}>
                             <List size={18} color="white" weight="bold" />
                         </TouchableOpacity>
                     )}
-                </View>
+                </TouchableOpacity>
 
                 {isLoading ? (
                     <View style={s.loadingContainer}>
                         <ActivityIndicator size="large" color={PIG.rose} />
                         <Text style={s.loadingText}>Analyzing behavior...</Text>
+                    </View>
+                ) : isMatchingPigs ? (
+                    <View style={s.loadingContainer}>
+                        <ActivityIndicator size="large" color={PIG.rose} />
+                        <Text style={s.loadingText}>Matching pig identities across sessions...</Text>
                     </View>
                 ) : resultData ? (
                     <>
@@ -596,7 +721,7 @@ export default function Results() {
                 )}
             </ScrollView>
 
-            {resultData && (
+            {resultData && !isMatchingPigs && (
                 <View style={s.bottomBar}>
                     {showExports && (
                         <View style={s.exportRow}>
@@ -749,6 +874,22 @@ const s = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         elevation: 4,
+    },
+
+    tapHint: {
+        position: 'absolute',
+        top: 12,
+        right: 12,
+        backgroundColor: 'rgba(0,0,0,0.45)',
+        paddingVertical: 4,
+        paddingHorizontal: 10,
+        borderRadius: 8,
+    },
+
+    tapHintText: {
+        color: 'white',
+        fontSize: 11,
+        fontFamily: 'NunitoSans-SemiBold',
     },
 
     summaryStrip: {
